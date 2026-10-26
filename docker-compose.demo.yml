@@ -1,0 +1,11 @@
+# Demonstração com dados fictícios, sem precisar do banco do Zabbix:
+#   docker compose -f docker-compose.demo.yml up --build
+services:
+  catalogo-demo:
+    build: .
+    image: catalogo-monitoramento:latest
+    environment:
+      DEMO_MODE: "true"
+      ZBX_FRONTEND_URL: "https://zabbix.exemplo.local"
+    ports:
+      - "8088:8080"
