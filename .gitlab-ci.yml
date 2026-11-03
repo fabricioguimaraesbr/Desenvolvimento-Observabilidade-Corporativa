@@ -7,8 +7,8 @@
 #   $CI_REGISTRY_IMAGE/catalogo     catalogo/
 # Tags: nome da branch (ex.: hml-corp), usada pela stack, e o commit curto.
 #
-# Depois do build, avisa as 3 stacks no Portainer, se a variável de CI
-# PORTAINER_WEBHOOKS tiver os webhooks delas (separados por espaço).
+# Depois do build, avisa as 3 stacks no Portainer pelas variáveis de CI
+# PORTAINER_WEBHOOK_1, _2 e _3 (URL do webhook de cada stack; mascaradas).
 # Para pegar builds novos do trunk, crie um agendamento semanal do pipeline.
 # =============================================================================
 
@@ -57,6 +57,13 @@ portainer:
     name: curlimages/curl:8.11.1
     entrypoint: [""]
   rules:
-    - if: $PORTAINER_WEBHOOKS
+    - if: $PORTAINER_WEBHOOK_1 || $PORTAINER_WEBHOOK_2 || $PORTAINER_WEBHOOK_3
   script:
-    - for url in $PORTAINER_WEBHOOKS; do curl -fsS -X POST "$url" && echo "ok $url"; done
+    - |
+      falhou=0
+      for n in 1 2 3; do
+        eval url=\${PORTAINER_WEBHOOK_$n:-}
+        [ -z "$url" ] && continue
+        if curl -fsS -X POST "$url" -o /dev/null; then echo "stack $n atualizada"; else echo "stack $n falhou"; falhou=1; fi
+      done
+      exit $falhou

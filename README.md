@@ -126,7 +126,7 @@ Em cada um dos 3 ambientes: *Stacks → Add stack → Repository*.
 
 `IMAGE_REGISTRY` é o endereço do registry do projeto (o `CI_REGISTRY_IMAGE`, que aparece em *Deploy → Container Registry*). Nas variáveis, só `NODE_NAME`, `NODE_IP` e `CATALOGO_COLLECT_AT` mudam entre as 3 stacks; o resto é igual. A `GRAFANA_SECRET_KEY` **precisa** ser a mesma nas 3. O `ZABBIX_API_TOKEN` fica vazio até o passo 4.
 
-**Atualizações automáticas:** copie a URL do webhook de cada uma das 3 stacks e coloque as três, separadas por espaço, na variável de CI `PORTAINER_WEBHOOKS` do projeto (*Settings → CI/CD → Variables*, mascarada). A cada commit, o pipeline constrói as imagens e só **depois** chama os webhooks, e o Portainer baixa o Git e as imagens novas. Com polling, o Portainer poderia atualizar antes de as imagens ficarem prontas.
+**Atualizações automáticas:** copie a URL do webhook de cada uma das 3 stacks para as variáveis de CI `PORTAINER_WEBHOOK_1`, `PORTAINER_WEBHOOK_2` e `PORTAINER_WEBHOOK_3` do projeto (*Settings → CI/CD → Variables*, **mascaradas**: quem tem a URL atualiza a stack). A cada commit, o pipeline constrói as imagens e só **depois** chama os webhooks, e o Portainer baixa o Git e as imagens novas. Com polling, o Portainer poderia atualizar antes de as imagens ficarem prontas.
 
 ### 4. Configurar no frontend do Zabbix
 
