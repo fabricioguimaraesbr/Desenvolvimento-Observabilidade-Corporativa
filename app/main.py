@@ -29,8 +29,18 @@ catalog = Catalog(settings.catalog_path)
 
 
 # ------------------------------------------------------------------ acesso
+async def base_path(request: Request, call_next):
+    # Atrás do nginx do Zabbix os caminhos chegam com o prefixo (/catalogo/...); o acesso direto
+    # pela porta do container e o healthcheck chegam sem ele. O Starlette espera o prefixo no
+    # caminho, então completamos aqui para rotas e arquivos estáticos funcionarem nos dois casos.
+    path, prefix = request.scope["path"], settings.base_path
+    if prefix and path != prefix and not path.startswith(prefix + "/"):
+        request.scope["path"] = prefix + path
+    return await call_next(request)
+
+
 async def basic_auth(request: Request, call_next):
-    if settings.basic_auth_user and request.url.path != "/api/health":
+    if settings.basic_auth_user and request.scope["path"] != settings.base_path + "/api/health":
         header = request.headers.get("authorization", "")
         ok = False
         if header.startswith("Basic "):
@@ -90,8 +100,10 @@ async def lifespan(_app):
     yield
 
 
-app = FastAPI(title=settings.app_title, docs_url="/api/docs", redoc_url=None, lifespan=lifespan)
+app = FastAPI(title=settings.app_title, docs_url="/api/docs", redoc_url=None, lifespan=lifespan,
+              root_path=settings.base_path)
 app.middleware("http")(basic_auth)
+app.middleware("http")(base_path)  # registrado por último = roda primeiro
 app.add_exception_handler(CatalogMissing, _missing)
 
 

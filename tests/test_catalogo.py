@@ -73,3 +73,18 @@ def test_admin_requires_token(client):
 
 def test_unmapped(client):
     assert client.get("/api/unmapped").json()["total"] > 0
+
+
+def test_base_path(client, monkeypatch):
+    """Atrás do nginx (BASE_PATH=/catalogo) e no acesso direto, sem prefixo."""
+    import app.main as main
+    monkeypatch.setattr(main, "settings", replace(main.settings, base_path="/catalogo"))
+    monkeypatch.setattr(main.app, "root_path", "/catalogo")
+    for path in ("/catalogo/", "/catalogo/static/app.css", "/catalogo/api/summary", "/catalogo/api/export/apps.csv",
+                 "/", "/static/app.js", "/api/health"):
+        assert client.get(path).status_code == 200, path
+    assert "/catalogo/openapi.json" in client.get("/catalogo/api/docs").text
+    # A interface só usa caminhos relativos, para funcionar com ou sem o prefixo
+    for name in ("index.html", "app.js", "app.css"):
+        text = (ROOT / "app/static" / name).read_text(encoding="utf-8")
+        assert not re.search(r"""["'`(]/(api|static)/""", text), name

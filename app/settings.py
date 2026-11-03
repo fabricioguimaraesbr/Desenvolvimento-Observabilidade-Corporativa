@@ -17,6 +17,12 @@ def _int(name: str, default: int) -> int:
         return default
 
 
+def _prefix(name: str) -> str:
+    """"catalogo/", "/catalogo" ou "/catalogo/" -> "/catalogo"; vazio ou "/" -> ""."""
+    p = os.getenv(name, "").strip().strip("/")
+    return f"/{p}" if p else ""
+
+
 @dataclass(frozen=True)
 class Settings:
     # Banco do Zabbix (somente leitura)
@@ -45,6 +51,10 @@ class Settings:
     admin_token: str = field(default_factory=lambda: os.getenv("ADMIN_TOKEN", ""))
     basic_auth_user: str = field(default_factory=lambda: os.getenv("BASIC_AUTH_USER", ""))
     basic_auth_password: str = field(default_factory=lambda: os.getenv("BASIC_AUTH_PASSWORD", ""))
+
+    # Prefixo público quando publicado atrás de um proxy (ex.: "/catalogo"). O proxy repassa
+    # o caminho completo; a interface usa caminhos relativos e funciona com ou sem prefixo.
+    base_path: str = field(default_factory=lambda: _prefix("BASE_PATH"))
 
     # Texto exibido no topo da interface
     app_title: str = field(default_factory=lambda: os.getenv("APP_TITLE", "Catálogo de Monitoramento"))
