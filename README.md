@@ -63,7 +63,7 @@ portainer.env.example       lista das variáveis da stack no Portainer (senhas e
 monitoring-data/<container>/<container>.env   demais variáveis de cada container (sem senhas)
 config/
   zabbix-web/               Dockerfile + nginx com o /catalogo/
-  grafana/                  Dockerfile + provisioning (plugin e datasource do Zabbix)
+  grafana/                  Dockerfile + plugin e datasource do Zabbix + LDAP (ldap.toml, certs/)
   zabbix-web-service/       perfil seccomp do Chrome (relatórios PDF)
 scripts/validar.sh          checagens depois da subida (no shell do servidor)
 catalogo/                   Catálogo de Monitoramento (código, regras, testes, README próprio)
@@ -143,7 +143,24 @@ Os **agentes** e as **aplicações com OpenTelemetry** não passam pelo F5:
 - **Agentes ativos:** `ServerActive=10.0.0.11:10051;10.0.0.12:10051;10.0.0.13:10051`, ou o proxy group.
 - **APM:** apontam para a porta 4317 de qualquer proxy.
 
-### 6. Validar
+### 6. LDAP no Grafana
+
+O Grafana autentica no AD pelo `config/grafana/ldap.toml`, que vai dentro da imagem e lê tudo de variáveis:
+
+| Onde | Variável | O quê |
+|---|---|---|
+| `grafana.env` (Git) | `LDAP_HOST`, `LDAP_PORT`, `LDAP_USE_SSL`, `LDAP_START_TLS` | controladores de domínio e LDAPS (636) ou LDAP (389) |
+| `grafana.env` (Git) | `LDAP_BIND_DN` | conta de serviço que consulta o AD |
+| `grafana.env` (Git) | `LDAP_SEARCH_BASE_DN`, `LDAP_SEARCH_FILTER` | onde procurar os usuários (padrão AD: `sAMAccountName`) |
+| `grafana.env` (Git) | `LDAP_GROUP_ADMIN_DN`, `LDAP_GROUP_EDITOR_DN`, `LDAP_GROUP_VIEWER_DN` | grupos do AD que viram Admin, Editor e Viewer (`*` = todos) |
+| `grafana.env` (Git) | `LDAP_ROOT_CA_CERT` | CA da empresa para LDAPS; o arquivo vai em `config/grafana/certs/` |
+| Portainer | `LDAP_BIND_PASSWORD` | senha da conta de serviço |
+
+O admin local (`admin`) continua entrando, para não perder o acesso se o AD cair. Para testar um usuário: *Administração → Autenticação → LDAP → Test user mapping*. Não salve alterações nessa tela: no Grafana 13 o que for salvo pela interface passa a valer no lugar do `ldap.toml`.
+
+A senha da conta de serviço não pode ter aspas duplas (`"`) nem barra invertida (`\`), porque ela é inserida num arquivo TOML.
+
+### 7. Validar
 
 Pelo Portainer: na stack, todos os containers `running` e o `zabbix-web` `healthy`; os logs de cada container ficam no ícone de logs.
 
@@ -173,6 +190,7 @@ O script confere:
 | 8 | Browser item | Item do tipo *Browser* (ex.: template *Website by Browser*) | Item coletando via Selenium |
 | 9 | MCP | `validar.sh` com `ZABBIX_API_TOKEN` | `tools/list` responde |
 | 10 | Grafana | `https://grafana.empresa.com.br` → *Connections → Data sources → Zabbix → Test* | Datasource OK; mesmo dashboard visto pelos 3 nós |
+| 11a | LDAP | Login no Grafana com um usuário do AD de cada grupo | Entra com o papel do grupo (Admin/Editor/Viewer) |
 | 11 | APM | App com OpenTelemetry exportando para `<IP do proxy>:4317` | Traces aparecem no Zabbix |
 | 12 | GitOps | Commit trocando um valor em `monitoring-data/` | As 3 stacks atualizam sozinhas |
 

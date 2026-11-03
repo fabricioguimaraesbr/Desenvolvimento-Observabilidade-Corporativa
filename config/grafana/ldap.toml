@@ -1,0 +1,45 @@
+# =============================================================================
+# LDAP do Grafana. Vai dentro da imagem (config/grafana/Dockerfile).
+# NÃO edite valores aqui: cada $__env{...} vem de uma variável de ambiente.
+#   - monitoring-data/grafana/grafana.env (no Git): servidor, DNs, filtro, grupos
+#   - variável LDAP_BIND_PASSWORD da stack no Portainer: senha da conta de serviço
+# Modelo pensado para Active Directory.
+# =============================================================================
+
+[[servers]]
+# Vários controladores de domínio: separe por espaço ("dc1.empresa dc2.empresa")
+host = "$__env{LDAP_HOST}"
+port = $__env{LDAP_PORT}
+use_ssl = $__env{LDAP_USE_SSL}
+start_tls = $__env{LDAP_START_TLS}
+ssl_skip_verify = $__env{LDAP_SSL_SKIP_VERIFY}
+# CA da empresa para LDAPS (vazio = CAs do sistema). Ver config/grafana/certs/
+root_ca_cert = "$__env{LDAP_ROOT_CA_CERT}"
+timeout = 10
+
+bind_dn = "$__env{LDAP_BIND_DN}"
+bind_password = "$__env{LDAP_BIND_PASSWORD}"
+
+search_filter = "$__env{LDAP_SEARCH_FILTER}"
+search_base_dns = ["$__env{LDAP_SEARCH_BASE_DN}"]
+
+[servers.attributes]
+name = "givenName"
+surname = "sn"
+username = "sAMAccountName"
+member_of = "memberOf"
+email = "mail"
+
+# Grupos do AD -> papéis no Grafana. Vale o primeiro grupo que casar.
+[[servers.group_mappings]]
+group_dn = "$__env{LDAP_GROUP_ADMIN_DN}"
+org_role = "Admin"
+grafana_admin = true
+
+[[servers.group_mappings]]
+group_dn = "$__env{LDAP_GROUP_EDITOR_DN}"
+org_role = "Editor"
+
+[[servers.group_mappings]]
+group_dn = "$__env{LDAP_GROUP_VIEWER_DN}"
+org_role = "Viewer"

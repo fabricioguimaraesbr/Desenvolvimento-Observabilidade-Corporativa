@@ -1,0 +1,5 @@
+Coloque aqui a CA da empresa (formato PEM, ex.: ca-corporativa.crt) se o LDAP
+usar LDAPS com certificado interno. Ela vai para /etc/grafana/certs/ na imagem.
+Depois, em monitoring-data/grafana/grafana.env:
+  LDAP_ROOT_CA_CERT=/etc/grafana/certs/ca-corporativa.crt
+Certificado de CA é público: pode ficar no Git.

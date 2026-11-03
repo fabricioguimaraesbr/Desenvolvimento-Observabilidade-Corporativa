@@ -238,6 +238,7 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Defina GRAFANA_ADMIN_PASSWORD nas variáveis da stack no Portainer}
       GF_SECURITY_SECRET_KEY: ${GRAFANA_SECRET_KEY:?Defina GRAFANA_SECRET_KEY nas variáveis da stack no Portainer}
       ZABBIX_API_TOKEN: ${ZABBIX_API_TOKEN:-}
+      LDAP_BIND_PASSWORD: ${LDAP_BIND_PASSWORD:?Defina LDAP_BIND_PASSWORD nas variáveis da stack no Portainer}
       TZ: ${TZ:-America/Sao_Paulo}
     ports:
       - "${BIND_IP:-0.0.0.0}:${GRAFANA_PORT:-3000}:3000"
