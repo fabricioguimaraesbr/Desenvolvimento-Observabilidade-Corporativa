@@ -1,0 +1,12 @@
+# Linhas para o pg_hba.conf do DBxxx (troque os IPs pelos dos 3 servidores).
+# Depois: SELECT pg_reload_conf();
+# TYPE  DATABASE  USER          ADDRESS          METHOD
+host    zabbix    zabbix        10.0.0.11/32     scram-sha-256
+host    zabbix    zabbix        10.0.0.12/32     scram-sha-256
+host    zabbix    zabbix        10.0.0.13/32     scram-sha-256
+host    zabbix    zbx_catalogo  10.0.0.11/32     scram-sha-256
+host    zabbix    zbx_catalogo  10.0.0.12/32     scram-sha-256
+host    zabbix    zbx_catalogo  10.0.0.13/32     scram-sha-256
+host    grafana   grafana       10.0.0.11/32     scram-sha-256
+host    grafana   grafana       10.0.0.12/32     scram-sha-256
+host    grafana   grafana       10.0.0.13/32     scram-sha-256

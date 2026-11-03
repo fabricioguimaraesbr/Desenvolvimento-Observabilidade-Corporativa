@@ -1,0 +1,6 @@
+# Habilita o app do Zabbix (instalado por GF_PLUGINS_PREINSTALL no grafana.env)
+apiVersion: 1
+apps:
+  - type: alexanderzobnin-zabbix-app
+    org_id: 1
+    disabled: false

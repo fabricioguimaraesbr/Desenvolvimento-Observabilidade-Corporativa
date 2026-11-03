@@ -1,0 +1,21 @@
+# Datasource do Zabbix apontando para o Zabbix web do PRÓPRIO servidor (rede "monitoring").
+# Autenticação por token de API (ZABBIX_API_TOKEN no grafana.env): use um usuário de
+# serviço do Zabbix com papel somente leitura.
+apiVersion: 1
+datasources:
+  - name: Zabbix
+    uid: zabbix
+    type: alexanderzobnin-zabbix-datasource
+    url: http://zabbix-web:8080/api_jsonrpc.php
+    isDefault: true
+    editable: false
+    jsonData:
+      authType: token
+      trends: true
+      trendsFrom: '7d'
+      trendsRange: '4d'
+      cacheTTL: '1h'
+      timeout: 30
+    secureJsonData:
+      apiToken: $ZABBIX_API_TOKEN
+    version: 1

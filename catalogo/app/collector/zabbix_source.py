@@ -1,4 +1,4 @@
-"""Leitura do banco do Zabbix 7.x (PostgreSQL / TimescaleDB).
+"""Leitura do banco do Zabbix 7.x e 8.0 (PostgreSQL / TimescaleDB).
 
 Só tabelas de configuração são lidas (hosts, itens, triggers, tags...).
 Nenhuma tabela de histórico/tendência é tocada, então o TimescaleDB não pesa
@@ -35,6 +35,9 @@ class ZabbixSource:
         with self.conn.cursor() as cur:
             cur.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
             cur.execute(f"SET statement_timeout = '{int(s.db_statement_timeout_s)}s'")
+            # Zabbix 8.0 levou o estado das triggers (value) para trigger_rtdata
+            cur.execute("SELECT to_regclass('trigger_rtdata') IS NOT NULL")
+            self._trigger_rtdata = cur.fetchone()[0]
         self.conn.commit()
         self._n = 0
 
@@ -76,9 +79,10 @@ class ZabbixSource:
         """hostid, host, name, status, maintenance_status, flags, proxy, description"""
         return self._stream(f"""
             SELECT h.hostid, h.host, h.name, h.status, h.maintenance_status, h.flags,
-                   COALESCE(p.name, ''), COALESCE(h.description, '')
+                   COALESCE(p.name, 'grupo ' || pg.name, ''), COALESCE(h.description, '')
               FROM hosts h
               LEFT JOIN proxy p ON p.proxyid = h.proxyid
+              LEFT JOIN proxy_group pg ON pg.proxy_groupid = h.proxy_groupid
              WHERE h.status IN (0, 1) AND h.flags IN {_REAL}
         """)
 
@@ -156,14 +160,19 @@ class ZabbixSource:
 
     def triggers(self) -> Iterator[tuple]:
         """triggerid, hostid, descrição, prioridade, status, value (1 = em problema)"""
+        if self._trigger_rtdata:
+            value, rtdata, group = "COALESCE(r.value, 0)", "LEFT JOIN trigger_rtdata r ON r.triggerid = t.triggerid", ", r.value"
+        else:
+            value, rtdata, group = "t.value", "", ""
         return self._stream(f"""
-            SELECT t.triggerid, i.hostid, t.description, t.priority, t.status, t.value
+            SELECT t.triggerid, i.hostid, t.description, t.priority, t.status, {value}
               FROM triggers t
+              {rtdata}
               JOIN functions f ON f.triggerid = t.triggerid
               JOIN items i     ON i.itemid = f.itemid
               JOIN hosts h     ON h.hostid = i.hostid AND h.status IN (0, 1)
              WHERE t.flags IN {_REAL}
-             GROUP BY t.triggerid, i.hostid
+             GROUP BY t.triggerid, i.hostid{group}
         """)
 
     # ------------------------------------------------- regras sobre os itens

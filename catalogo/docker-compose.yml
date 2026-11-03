@@ -1,0 +1,39 @@
+# Catálogo de Monitoramento
+# Sobe ao lado do Zabbix existente e é publicado pelo nginx do zabbix-web em
+# https://zabbix.empresa.com.br/catalogo/ (ver deploy/zabbix-web/).
+# Ajuste os nomes das redes externas (docker network ls):
+#   ZABBIX_DOCKER_NETWORK     rede onde está o PostgreSQL do Zabbix
+#   ZABBIX_WEB_DOCKER_NETWORK rede onde está o container zabbix-web (muitas vezes a mesma)
+services:
+  catalogo:
+    build: .
+    image: catalogo-monitoramento:latest
+    # Nome usado pelo nginx do zabbix-web para encaminhar /catalogo/ (deploy/zabbix-web/catalogo.conf)
+    container_name: catalogo-monitoramento
+    restart: unless-stopped
+    env_file: .env
+    # Acesso direto, opcional, para diagnóstico. O acesso oficial é pelo /catalogo/ do Zabbix.
+    ports:
+      - "${CATALOGO_PORT:-8088}:8080"
+    volumes:
+      - catalogo-data:/data
+      - ./config/rules.yaml:/config/rules.yaml:ro
+    networks:
+      - zabbix
+      - zabbix-web
+    # Coleta usa pouca memória (streaming), mas o SQLite gosta de cache
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+volumes:
+  catalogo-data:
+
+networks:
+  zabbix:
+    external: true
+    name: ${ZABBIX_DOCKER_NETWORK:-zabbix_default}
+  zabbix-web:
+    external: true
+    name: ${ZABBIX_WEB_DOCKER_NETWORK:-${ZABBIX_DOCKER_NETWORK:-zabbix_default}}
