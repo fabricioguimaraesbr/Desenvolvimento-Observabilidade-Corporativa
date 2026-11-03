@@ -1,0 +1,30 @@
+# Catálogo de Monitoramento
+# Sobe ao lado do Zabbix existente. Ajuste o nome da rede externa para a rede
+# onde o container do PostgreSQL do Zabbix está (docker network ls).
+services:
+  catalogo:
+    build: .
+    image: catalogo-monitoramento:latest
+    container_name: catalogo-monitoramento
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${CATALOGO_PORT:-8088}:8080"
+    volumes:
+      - catalogo-data:/data
+      - ./config/rules.yaml:/config/rules.yaml:ro
+    networks:
+      - zabbix
+    # Coleta usa pouca memória (streaming), mas o SQLite gosta de cache
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+volumes:
+  catalogo-data:
+
+networks:
+  zabbix:
+    external: true
+    name: ${ZABBIX_DOCKER_NETWORK:-zabbix_default}
