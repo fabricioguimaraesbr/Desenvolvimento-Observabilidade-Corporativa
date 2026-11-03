@@ -2,16 +2,13 @@
 # Monitoramento Corporativo - stack de UM servidor
 # -----------------------------------------------------------------------------
 # A mesma stack roda nos 3 servidores. O Zabbix server fica em HA entre eles e
-# o PostgreSQL (TimescaleDB) e o ClickHouse ficam no servidor DBxxx.
+# o PostgreSQL e o ClickHouse já existentes ficam no servidor DBxxx.
 #
-#   Variáveis do servidor:   .env (copie de .env.example)
-#   Variáveis dos containers: ${MONITORING_DATA}/<container>/<container>.env
-#   Dados persistentes:      ${DOCKER_DATA}/<container>
+#   Variáveis do servidor:    .env (copie de .env.example)
+#   Variáveis dos containers: monitoring-data/<container>/<container>.env
+#   Dados persistentes:       data/<container> (criada pelo scripts/preparar-servidor.sh)
 #
-#   Primeira vez, SÓ no servidor 1 (cria o schema no PostgreSQL e no ClickHouse):
-#     docker compose --profile init run --rm zabbix-db-init
-#     docker compose --profile init run --rm zabbix-telemetry-init
-#   Subir (nos 3 servidores, começando pelo 1):
+#   Subir (nos 3 servidores):
 #     docker compose up -d --build
 #
 # Detalhes no README.md.
@@ -40,20 +37,20 @@ x-zabbix-ulimits: &zabbix-ulimits
       soft: 20000
       hard: 40000
 
-# Pastas do Zabbix server, usadas também pelos jobs de inicialização do banco
+# Pastas do Zabbix server
 x-zabbix-server-volumes: &zabbix-server-volumes
   volumes:
     - /etc/localtime:/etc/localtime:ro
-    - ${DOCKER_DATA:-/u/docker-data}/zabbix-server/alertscripts:/usr/lib/zabbix/alertscripts:ro
-    - ${DOCKER_DATA:-/u/docker-data}/zabbix-server/externalscripts:/usr/lib/zabbix/externalscripts:ro
-    - ${DOCKER_DATA:-/u/docker-data}/zabbix-server/export:/var/lib/zabbix/export:rw
-    - ${DOCKER_DATA:-/u/docker-data}/zabbix-server/modules:/var/lib/zabbix/modules:ro
-    - ${DOCKER_DATA:-/u/docker-data}/zabbix-server/enc:/var/lib/zabbix/enc:ro
-    - ${DOCKER_DATA:-/u/docker-data}/zabbix-server/ssh_keys:/var/lib/zabbix/ssh_keys:ro
-    - ${DOCKER_DATA:-/u/docker-data}/zabbix-server/mibs:/var/lib/zabbix/mibs:ro
-    - ${DOCKER_DATA:-/u/docker-data}/zabbix-server/ssl/certs:/var/lib/zabbix/ssl/certs:ro
-    - ${DOCKER_DATA:-/u/docker-data}/zabbix-server/ssl/keys:/var/lib/zabbix/ssl/keys:ro
-    - ${DOCKER_DATA:-/u/docker-data}/zabbix-server/ssl/ssl_ca:/var/lib/zabbix/ssl/ssl_ca:ro
+    - ./data/zabbix-server/alertscripts:/usr/lib/zabbix/alertscripts:ro
+    - ./data/zabbix-server/externalscripts:/usr/lib/zabbix/externalscripts:ro
+    - ./data/zabbix-server/export:/var/lib/zabbix/export:rw
+    - ./data/zabbix-server/modules:/var/lib/zabbix/modules:ro
+    - ./data/zabbix-server/enc:/var/lib/zabbix/enc:ro
+    - ./data/zabbix-server/ssh_keys:/var/lib/zabbix/ssh_keys:ro
+    - ./data/zabbix-server/mibs:/var/lib/zabbix/mibs:ro
+    - ./data/zabbix-server/ssl/certs:/var/lib/zabbix/ssl/certs:ro
+    - ./data/zabbix-server/ssl/keys:/var/lib/zabbix/ssl/keys:ro
+    - ./data/zabbix-server/ssl/ssl_ca:/var/lib/zabbix/ssl/ssl_ca:ro
 
 services:
   # ---------------------------------------------------------------------------
@@ -64,7 +61,7 @@ services:
     container_name: zabbix-server
     init: true
     restart: unless-stopped
-    env_file: ${MONITORING_DATA:-/u/monitoring-data}/zabbix-server/zabbix-server.env
+    env_file: ./monitoring-data/zabbix-server/zabbix-server.env
     environment:
       ZBX_HANODENAME: ${NODE_NAME:?Defina NODE_NAME no .env}
       ZBX_NODEADDRESS: ${NODE_IP:?Defina NODE_IP no .env}:${ZBX_SERVER_PORT:-10051}
@@ -81,35 +78,6 @@ services:
     stop_grace_period: 30s
     networks: [monitoring]
 
-  # Jobs de inicialização (profile "init"): rodar UMA vez, só no servidor 1,
-  # antes da primeira subida. Usam as mesmas variáveis do zabbix-server.
-  zabbix-db-init:
-    image: zabbix/zabbix-server-pgsql:${ZABBIX_TAG:-alpine-trunk}
-    profiles: ["init"]
-    init: true
-    restart: "no"
-    read_only: true
-    command: init_db_only
-    env_file: ${MONITORING_DATA:-/u/monitoring-data}/zabbix-server/zabbix-server.env
-    tmpfs: [/tmp]
-    networks: [monitoring]
-
-  zabbix-telemetry-init:
-    image: zabbix/zabbix-server-pgsql:${ZABBIX_TAG:-alpine-trunk}
-    profiles: ["init"]
-    init: true
-    restart: "no"
-    read_only: true
-    command: init_db_telemetry
-    env_file: ${MONITORING_DATA:-/u/monitoring-data}/zabbix-server/zabbix-server.env
-    environment:
-      # Cria as tabelas de APM (traces/métricas/logs OpenTelemetry) no ClickHouse
-      ZBX_TELEMETRYPROVIDER_0_SCHEMA: '{"create":true}'
-    tmpfs:
-      - /tmp
-      - /var/lib/zabbix/ssl/ssl_ca_internal:mode=770,uid=1997,gid=0
-    networks: [monitoring]
-
   # ---------------------------------------------------------------------------
   # Zabbix web (nginx). Sem ZBX_SERVER_HOST: em HA o frontend descobre o nó
   # ativo pelo banco. Também publica o Catálogo em /catalogo/.
@@ -118,7 +86,7 @@ services:
     image: zabbix/zabbix-web-nginx-pgsql:${ZABBIX_TAG:-alpine-trunk}
     container_name: zabbix-web
     restart: unless-stopped
-    env_file: ${MONITORING_DATA:-/u/monitoring-data}/zabbix-web/zabbix-web.env
+    env_file: ./monitoring-data/zabbix-web/zabbix-web.env
     environment:
       TZ: ${TZ:-America/Sao_Paulo}
     ports:
@@ -127,8 +95,8 @@ services:
     volumes:
       - /etc/localtime:/etc/localtime:ro
       # Certificado do HTTPS (ssl.crt, ssl.key, dhparam.pem). Sem eles, só HTTP.
-      - ${DOCKER_DATA:-/u/docker-data}/zabbix-web/ssl:/etc/ssl/nginx:ro
-      - ${DOCKER_DATA:-/u/docker-data}/zabbix-web/modules:/usr/share/zabbix/modules:ro
+      - ./data/zabbix-web/ssl:/etc/ssl/nginx:ro
+      - ./data/zabbix-web/modules:/usr/share/zabbix/modules:ro
       # /catalogo/ -> container catalogo (ver config/zabbix-web/)
       - ./config/zabbix-web/catalogo.conf:/etc/nginx/catalogo/catalogo.conf:ro
       - ./config/zabbix-web/nginx.conf:/etc/zabbix/nginx.conf:ro
@@ -157,7 +125,7 @@ services:
     container_name: zabbix-proxy
     init: true
     restart: unless-stopped
-    env_file: ${MONITORING_DATA:-/u/monitoring-data}/zabbix-proxy/zabbix-proxy.env
+    env_file: ./monitoring-data/zabbix-proxy/zabbix-proxy.env
     environment:
       ZBX_HOSTNAME: proxy-${NODE_NAME:?Defina NODE_NAME no .env}
       ZBX_SERVER_HOST: ${ZBX_HA_NODES:?Defina ZBX_HA_NODES no .env}
@@ -169,15 +137,15 @@ services:
       - "${BIND_IP:-0.0.0.0}:${ZBX_PROXY_APM_PORT:-4317}:4317"
     volumes:
       - /etc/localtime:/etc/localtime:ro
-      - ${DOCKER_DATA:-/u/docker-data}/zabbix-proxy/db_data:/var/lib/zabbix/db_data:rw
-      - ${DOCKER_DATA:-/u/docker-data}/zabbix-proxy/externalscripts:/usr/lib/zabbix/externalscripts:ro
-      - ${DOCKER_DATA:-/u/docker-data}/zabbix-proxy/modules:/var/lib/zabbix/modules:ro
-      - ${DOCKER_DATA:-/u/docker-data}/zabbix-proxy/enc:/var/lib/zabbix/enc:ro
-      - ${DOCKER_DATA:-/u/docker-data}/zabbix-proxy/ssh_keys:/var/lib/zabbix/ssh_keys:ro
-      - ${DOCKER_DATA:-/u/docker-data}/zabbix-proxy/mibs:/var/lib/zabbix/mibs:ro
-      - ${DOCKER_DATA:-/u/docker-data}/zabbix-proxy/ssl/certs:/var/lib/zabbix/ssl/certs:ro
-      - ${DOCKER_DATA:-/u/docker-data}/zabbix-proxy/ssl/keys:/var/lib/zabbix/ssl/keys:ro
-      - ${DOCKER_DATA:-/u/docker-data}/zabbix-proxy/ssl/ssl_ca:/var/lib/zabbix/ssl/ssl_ca:ro
+      - ./data/zabbix-proxy/db_data:/var/lib/zabbix/db_data:rw
+      - ./data/zabbix-proxy/externalscripts:/usr/lib/zabbix/externalscripts:ro
+      - ./data/zabbix-proxy/modules:/var/lib/zabbix/modules:ro
+      - ./data/zabbix-proxy/enc:/var/lib/zabbix/enc:ro
+      - ./data/zabbix-proxy/ssh_keys:/var/lib/zabbix/ssh_keys:ro
+      - ./data/zabbix-proxy/mibs:/var/lib/zabbix/mibs:ro
+      - ./data/zabbix-proxy/ssl/certs:/var/lib/zabbix/ssl/certs:ro
+      - ./data/zabbix-proxy/ssl/keys:/var/lib/zabbix/ssl/keys:ro
+      - ./data/zabbix-proxy/ssl/ssl_ca:/var/lib/zabbix/ssl/ssl_ca:ro
     tmpfs:
       - /tmp
       - /var/lib/zabbix/ssl/ssl_ca_internal:mode=770,uid=1997,gid=0
@@ -193,7 +161,7 @@ services:
     container_name: zabbix-java-gateway
     restart: unless-stopped
     read_only: true
-    env_file: ${MONITORING_DATA:-/u/monitoring-data}/zabbix-java-gateway/zabbix-java-gateway.env
+    env_file: ./monitoring-data/zabbix-java-gateway/zabbix-java-gateway.env
     environment:
       TZ: ${TZ:-America/Sao_Paulo}
     tmpfs: [/tmp]
@@ -209,7 +177,7 @@ services:
     container_name: zabbix-web-service
     restart: unless-stopped
     read_only: true
-    env_file: ${MONITORING_DATA:-/u/monitoring-data}/zabbix-web-service/zabbix-web-service.env
+    env_file: ./monitoring-data/zabbix-web-service/zabbix-web-service.env
     environment:
       TZ: ${TZ:-America/Sao_Paulo}
     tmpfs:
@@ -230,7 +198,7 @@ services:
     container_name: zabbix-mcp-server
     restart: unless-stopped
     read_only: true
-    env_file: ${MONITORING_DATA:-/u/monitoring-data}/zabbix-mcp-server/zabbix-mcp-server.env
+    env_file: ./monitoring-data/zabbix-mcp-server/zabbix-mcp-server.env
     environment:
       TZ: ${TZ:-America/Sao_Paulo}
     ports:
@@ -250,7 +218,7 @@ services:
     image: selenium/standalone-chrome:${SELENIUM_TAG:-latest}
     container_name: selenium
     restart: unless-stopped
-    env_file: ${MONITORING_DATA:-/u/monitoring-data}/selenium/selenium.env
+    env_file: ./monitoring-data/selenium/selenium.env
     environment:
       TZ: ${TZ:-America/Sao_Paulo}
     shm_size: 2gb
@@ -267,7 +235,7 @@ services:
     container_name: grafana
     restart: unless-stopped
     user: "472:0"
-    env_file: ${MONITORING_DATA:-/u/monitoring-data}/grafana/grafana.env
+    env_file: ./monitoring-data/grafana/grafana.env
     environment:
       GF_UNIFIED_ALERTING_HA_PEERS: ${GRAFANA_HA_PEERS:-}
       GF_UNIFIED_ALERTING_HA_ADVERTISE_ADDRESS: ${NODE_IP:?Defina NODE_IP no .env}:${GRAFANA_HA_PORT:-9094}
@@ -278,7 +246,7 @@ services:
       - "${BIND_IP:-0.0.0.0}:${GRAFANA_HA_PORT:-9094}:9094/tcp"
       - "${BIND_IP:-0.0.0.0}:${GRAFANA_HA_PORT:-9094}:9094/udp"
     volumes:
-      - ${DOCKER_DATA:-/u/docker-data}/grafana:/var/lib/grafana
+      - ./data/grafana:/var/lib/grafana
       - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
     <<: *default-logging
     networks: [monitoring]
@@ -290,7 +258,7 @@ services:
     image: portainer/agent:${PORTAINER_AGENT_TAG:-latest}
     container_name: portainer-agent
     restart: unless-stopped
-    env_file: ${MONITORING_DATA:-/u/monitoring-data}/portainer-agent/portainer-agent.env
+    env_file: ./monitoring-data/portainer-agent/portainer-agent.env
     ports:
       - "${BIND_IP:-0.0.0.0}:${PORTAINER_AGENT_PORT:-9001}:9001"
     volumes:
@@ -308,7 +276,7 @@ services:
     image: catalogo-monitoramento:latest
     container_name: catalogo
     restart: unless-stopped
-    env_file: ${MONITORING_DATA:-/u/monitoring-data}/catalogo/catalogo.env
+    env_file: ./monitoring-data/catalogo/catalogo.env
     environment:
       BASE_PATH: /catalogo
       COLLECT_AT: ${CATALOGO_COLLECT_AT:-03:30}
@@ -316,8 +284,8 @@ services:
     ports:
       - "${BIND_IP:-0.0.0.0}:${CATALOGO_PORT:-8088}:8080"
     volumes:
-      - ${DOCKER_DATA:-/u/docker-data}/catalogo:/data
-      - ${MONITORING_DATA:-/u/monitoring-data}/catalogo/rules.yaml:/config/rules.yaml:ro
+      - ./data/catalogo:/data
+      - ./monitoring-data/catalogo/rules.yaml:/config/rules.yaml:ro
     deploy:
       resources:
         limits:

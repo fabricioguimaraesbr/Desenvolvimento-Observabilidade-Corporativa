@@ -28,7 +28,7 @@ Branch `HML-Corp`: ambiente de homologação corporativo.
      └───────┬────────┘          └───────┬────────┘          └───────┬────────┘
              └───────────────────────────┼───────────────────────────┘
                                 ┌────────┴────────┐
-                                │      DBxxx      │  PostgreSQL 17 + TimescaleDB (zabbix, grafana)
+                                │      DBxxx      │  PostgreSQL do Zabbix 8.0 (zabbix, grafana)
                                 │                 │  ClickHouse (APM: traces, métricas, logs OTel)
                                 └─────────────────┘
 ```
@@ -36,7 +36,7 @@ Branch `HML-Corp`: ambiente de homologação corporativo.
 - **Uma stack por servidor.** O `docker-compose.yml` da raiz é o mesmo nos 3. O que muda entre eles fica só no `.env` do servidor: `NODE_NAME`, `NODE_IP` e horário de coleta do catálogo.
 - **HA do Zabbix server:** os 3 nós usam o mesmo banco; um fica ativo e os outros dois em standby. Se o ativo cai, um standby assume em cerca de 1 minuto. O frontend descobre sozinho o nó ativo pelo banco, por isso o web **não** tem `ZBX_SERVER_HOST`.
 - **Proxies:** um por servidor (`proxy-SRVxxx01`..03), cada um conhecendo os 3 nós do HA. No frontend eles formam um **proxy group**, que redistribui os hosts se um proxy cair. Os proxies também recebem **APM** (OpenTelemetry, OTLP gRPC na porta 4317) e gravam no ClickHouse.
-- **Banco:** fica no **DBxxx**, que já existe. Este repositório só traz os scripts para o DBA, em `db/`.
+- **Banco:** PostgreSQL e ClickHouse ficam no **DBxxx** e já existem, com o schema do Zabbix 8.0 criado. A stack só aponta para eles pelas variáveis; não cria banco, usuário nem tabela.
 - **Grafana:** usa banco compartilhado no PostgreSQL, então os 3 mostram os mesmos dashboards atrás do F5. O alerting roda em HA entre os 3 (porta 9094).
 
 ### Imagens
@@ -56,95 +56,78 @@ Branch `HML-Corp`: ambiente de homologação corporativo.
 
 > **Sobre o trunk:** `alpine-trunk` é o Zabbix **8.0 em desenvolvimento** (hoje 8.0.0rc3). A imagem muda a cada build. Para fixar uma versão, troque `ZABBIX_TAG` no `.env`, por exemplo para a tag 8.0 estável quando sair.
 
-## Diretórios
-
-| Onde | O quê |
-|---|---|
-| Raiz do repositório | `docker-compose.yml` e o `.env` do servidor |
-| `/u/docker-data/<container>` | Dados persistentes de cada container (SQLite do proxy, Grafana, catálogo, certificados, scripts, módulos) |
-| `/u/monitoring-data/<container>/<container>.env` | Variáveis de cada container (modelos em `monitoring-data/`) |
+## Arquivos e diretórios
 
 ```
-docker-compose.yml          stack de um servidor
-.env.example                variáveis do servidor (NODE_NAME, NODE_IP, portas, caminhos)
-monitoring-data/            modelos das variáveis de cada container
+docker-compose.yml          stack de um servidor (igual nos 3)
+.env.example                modelo das variáveis do SERVIDOR (o que muda entre os 3)
+monitoring-data/<container>/<container>.env.example   modelo das variáveis de cada container
 config/
   zabbix-web/               /catalogo/ no nginx do Zabbix web
   zabbix-web-service/       perfil seccomp do Chrome (relatórios PDF)
   grafana/provisioning/     plugin e datasource do Zabbix
-db/                         scripts para o DBA do DBxxx
+data/<container>/           dados persistentes (criado pelo preparar-servidor.sh; fora do git)
 scripts/
-  preparar-servidor.sh      cria /u/docker-data e /u/monitoring-data
+  preparar-servidor.sh      cria os arquivos de variáveis e as pastas de data/
   validar.sh                checagens depois da subida
 catalogo/                   Catálogo de Monitoramento (código, testes, README próprio)
 ```
 
+### Arquivos de variáveis
+
+Os arquivos `*.example` são **modelos versionados no git**. Não renomeie: **copie** tirando o `.example` (o `preparar-servidor.sh` faz isso). Os arquivos sem `.example` têm as senhas reais e estão no `.gitignore`, então um `git pull` nunca sobrescreve nem publica seus valores.
+
+| Arquivo | O que preencher | Igual nos 3? |
+|---|---|---|
+| `.env` | `NODE_NAME`, `NODE_IP`, `ZBX_HA_NODES`, `GRAFANA_HA_PEERS`, `CATALOGO_COLLECT_AT` | **Não**: cada servidor tem o seu |
+| `monitoring-data/zabbix-server/zabbix-server.env` | PostgreSQL e ClickHouse do DBxxx | Sim |
+| `monitoring-data/zabbix-web/zabbix-web.env` | PostgreSQL e ClickHouse do DBxxx | Sim |
+| `monitoring-data/grafana/grafana.env` | banco do Grafana, `GF_SECURITY_SECRET_KEY`, senha do admin, `ZABBIX_API_TOKEN` | Sim |
+| `monitoring-data/catalogo/catalogo.env` | usuário somente leitura no banco do Zabbix, URL do frontend | Sim |
+| `monitoring-data/zabbix-mcp-server/zabbix-mcp-server.env` | IPs que podem usar o MCP | Sim |
+| `monitoring-data/zabbix-proxy/zabbix-proxy.env` | ClickHouse do DBxxx (APM); PSK, se usar | Sim |
+| `monitoring-data/catalogo/rules.yaml` | regras do catálogo (opcional) | Sim |
+| demais (`java-gateway`, `web-service`, `selenium`, `portainer-agent`) | nada obrigatório | Sim |
+
 ## Passo a passo
 
-### 1. Banco no DBxxx (DBA)
+### 1. Pré-requisitos no DBxxx
 
-Troque as senhas e os IPs dos 3 servidores nos comandos e arquivos abaixo.
-
-```bash
-# PostgreSQL 17 + TimescaleDB: usuário/banco do Zabbix e extensão timescaledb
-psql -h DBxxx -U postgres -d postgres -v senha=SENHA_ZABBIX -f db/01-zabbix-postgresql.sql
-# Banco do Grafana
-psql -h DBxxx -U postgres -d postgres -v senha=SENHA_GRAFANA -f db/02-grafana-postgresql.sql
-# ClickHouse: banco e usuário do Zabbix (edite senha e IPs no arquivo antes)
-clickhouse-client -h DBxxx --user default --password SENHA_ADMIN --multiquery < db/04-clickhouse.sql
-```
-
-Libere os 3 servidores no `pg_hba.conf` (modelo em `db/pg_hba.conf.example`) e rode `SELECT pg_reload_conf();`. O ClickHouse precisa aceitar conexões HTTP na porta 8123 vindas dos 3 servidores.
-
-O usuário somente leitura do catálogo (`db/03-catalogo-usuario-somente-leitura.sql`) é criado **depois** do schema do Zabbix (passo 4), porque concede acesso às tabelas.
+Já existentes; só confira:
+- os 3 servidores conseguem conectar no PostgreSQL (5432) e no ClickHouse (HTTP 8123);
+- existe um database `grafana` com usuário para o Grafana;
+- existe um usuário **somente leitura** no banco do Zabbix para o catálogo.
 
 ### 2. Preparar cada servidor
 
 Em cada um dos 3 servidores, com o repositório clonado:
 
 ```bash
-cp .env.example .env              # ajuste NODE_NAME, NODE_IP, ZBX_HA_NODES, GRAFANA_HA_PEERS, CATALOGO_COLLECT_AT
 sudo ./scripts/preparar-servidor.sh
 ```
 
-O script cria `/u/docker-data/*` com o dono certo de cada imagem (Zabbix uid 1997, Grafana 472, Catálogo 10001). Também copia os modelos para `/u/monitoring-data/*/*.env`, sem sobrescrever arquivos que já existem. No fim, lista o que ainda está com valor de exemplo (`ALTERAR_`, `DBxxx`, `SRVxxx`, IPs `10.0.0.1x`).
+O script cria o `.env` e os `monitoring-data/*/*.env` a partir dos modelos, sem sobrescrever arquivos que já existem. Também cria `data/*` com o dono certo de cada imagem (Zabbix uid 1997, Grafana 472, Catálogo 10001). No fim, lista o que ainda está com valor de exemplo (`ALTERAR_`, `DBxxx`, `SRVxxx`, IPs `10.0.0.1x`).
 
-Edite `/u/monitoring-data/*/*.env` com os valores reais. Os arquivos são **iguais nos 3 servidores**: o que é de cada nó vem do `.env` da raiz. Atenção a dois valores:
+Edite os arquivos da tabela acima. Atenção a dois valores:
 - `GF_SECURITY_SECRET_KEY` do Grafana precisa ser **o mesmo nos 3**.
-- `ZABBIX_API_TOKEN` do Grafana só existe depois do passo 5. Até lá, o datasource do Zabbix fica sem autenticar.
+- `ZABBIX_API_TOKEN` do Grafana só existe depois do passo 4. Até lá, o datasource do Zabbix fica sem autenticar.
 
-**HTTPS no próprio Zabbix web (opcional):** coloque `ssl.crt`, `ssl.key` e `dhparam.pem` em `/u/docker-data/zabbix-web/ssl/`. Se o F5 termina o TLS, pode deixar só HTTP.
+**HTTPS no próprio Zabbix web (opcional):** coloque `ssl.crt`, `ssl.key` e `dhparam.pem` em `data/zabbix-web/ssl/`. Se o F5 termina o TLS, pode deixar só HTTP.
 
-### 3. Inicializar o schema (uma vez, só no servidor 1)
-
-```bash
-docker compose --profile init run --rm zabbix-db-init         # tabelas + hypertables TimescaleDB no PostgreSQL
-docker compose --profile init run --rm zabbix-telemetry-init  # tabelas de APM no ClickHouse
-```
-
-Os jobs ficam no profile `init` e **não** sobem com `docker compose up`. Assim os 3 servidores nunca disputam a criação do schema.
-
-### 4. Subir
+### 3. Subir
 
 ```bash
-# servidor 1 primeiro; depois 2 e 3
 docker compose up -d --build
 ```
 
-Depois do servidor 1 no ar, crie o usuário do catálogo no DBxxx, **conectado no banco do Zabbix**:
-
-```bash
-psql -h DBxxx -U postgres -d zabbix -v senha=SENHA_CATALOGO -f db/03-catalogo-usuario-somente-leitura.sql
-```
-
-### 5. Configurar no frontend do Zabbix
+### 4. Configurar no frontend do Zabbix
 
 1. Troque a senha do `Admin`.
 2. **Proxies:** em *Administração → Proxies*, crie os proxies `proxy-SRVxxx01`, `proxy-SRVxxx02` e `proxy-SRVxxx03` (modo ativo) e um **proxy group** com os três (*Administração → Proxy groups*, mínimo online = 1). Monitore os hosts pelo proxy group.
 3. **Token do Grafana:** crie um usuário de serviço com papel somente leitura e um token de API para ele. Coloque o token em `ZABBIX_API_TOKEN` no `grafana.env` dos 3 servidores e rode `docker compose up -d grafana`.
 4. **Relatórios:** em *Administração → Geral → Outros*, ajuste a *URL do frontend* para `https://zabbix.empresa.com.br/`. O web service usa essa URL para gerar os PDFs.
 
-### 6. Balanceador (F5)
+### 5. Balanceador (F5)
 
 | Serviço | Pool | Health check |
 |---|---|---|
@@ -158,7 +141,7 @@ Os **agentes** e as **aplicações com OpenTelemetry** não passam pelo F5:
 - **Agentes ativos:** `ServerActive=10.0.0.11:10051;10.0.0.12:10051;10.0.0.13:10051`, ou o proxy group.
 - **APM:** apontam para a porta 4317 de qualquer proxy.
 
-### 7. Validar
+### 6. Validar
 
 Em cada servidor:
 
@@ -195,7 +178,7 @@ O script confere:
 docker compose ps
 docker compose logs -f zabbix-server
 docker compose pull && docker compose up -d       # atualizar imagens (um servidor por vez)
-docker compose down                               # parar a stack deste servidor (os dados em /u ficam)
+docker compose down                               # parar a stack deste servidor (os dados em data/ ficam)
 ```
 
 Para atualizar o trunk, faça **um servidor por vez**. Comece pelos standby e deixe o ativo por último. Quando o schema muda entre builds, o primeiro server a subir aplica o upgrade no banco.
