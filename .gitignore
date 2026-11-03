@@ -5,7 +5,3 @@ __pycache__/
 data/
 *.sqlite
 *.building
-
-# Valores reais deste servidor (senhas): versionamos só os modelos *.example
-monitoring-data/*/*.env
-monitoring-data/catalogo/rules.yaml

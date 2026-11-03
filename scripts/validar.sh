@@ -25,7 +25,7 @@ check() {  # check <descrição> <comando...>
 
 echo "== Containers"
 for c in zabbix-server zabbix-web zabbix-proxy zabbix-java-gateway zabbix-web-service \
-         zabbix-mcp-server selenium grafana portainer-agent catalogo; do
+         zabbix-mcp-server selenium grafana catalogo; do
   state=$(docker inspect -f '{{.State.Status}}{{if .State.Health}}/{{.State.Health.Status}}{{end}}' "$c" 2>/dev/null)
   case $state in
     running|running/healthy) ok "$c ($state)" ;;
@@ -45,7 +45,7 @@ echo "== Serviços"
 check "Zabbix web responde em :$WEB_HTTP_PORT/ping" curl -fsS "http://127.0.0.1:$WEB_HTTP_PORT/ping"
 check "Catálogo responde em :$WEB_HTTP_PORT/catalogo/api/health" curl -fsS "http://127.0.0.1:$WEB_HTTP_PORT/catalogo/api/health"
 check "Grafana saudável em :$GRAFANA_PORT/api/health" curl -fsS "http://127.0.0.1:$GRAFANA_PORT/api/health"
-check "Portainer agent escuta em :$PORTAINER_AGENT_PORT" bash -c "exec 3<>/dev/tcp/127.0.0.1/$PORTAINER_AGENT_PORT"
+check "Portainer agent (instalado fora da stack) escuta em :$PORTAINER_AGENT_PORT" bash -c "exec 3<>/dev/tcp/127.0.0.1/$PORTAINER_AGENT_PORT"
 check "Selenium pronto (status do grid)" docker exec selenium curl -fsS http://localhost:4444/status
 check "Java gateway escuta em 10052 (rede interna)" docker exec zabbix-server sh -c "nc -z zabbix-java-gateway 10052"
 check "Web service escuta em 10053 (rede interna)" docker exec zabbix-server sh -c "nc -z zabbix-web-service 10053"

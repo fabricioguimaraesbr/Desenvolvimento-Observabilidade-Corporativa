@@ -4,12 +4,14 @@
 # A mesma stack roda nos 3 servidores. O Zabbix server fica em HA entre eles e
 # o PostgreSQL e o ClickHouse já existentes ficam no servidor DBxxx.
 #
-#   Variáveis do servidor:    .env (copie de .env.example)
-#   Variáveis dos containers: monitoring-data/<container>/<container>.env
-#   Dados persistentes:       data/<container> (criada pelo scripts/preparar-servidor.sh)
+# Feita para o Portainer CE (stack do tipo Repository, apontando para o GitLab):
+#   Senhas e valores de cada servidor: variáveis da stack no Portainer
+#                                      (lista em portainer.env.example)
+#   Demais variáveis dos containers:   monitoring-data/<container>/<container>.env (no Git)
+#   Dados persistentes:                volumes nomeados do Docker
 #
-#   Subir (nos 3 servidores):
-#     docker compose up -d --build
+# Sem Portainer, na raiz do repositório: cp portainer.env.example .env,
+# preencha e rode docker compose up -d --build
 #
 # Detalhes no README.md.
 # =============================================================================
@@ -37,20 +39,12 @@ x-zabbix-ulimits: &zabbix-ulimits
       soft: 20000
       hard: 40000
 
-# Pastas do Zabbix server
+# Scripts do Zabbix server (vazios no início; o resto da configuração fica no banco)
 x-zabbix-server-volumes: &zabbix-server-volumes
   volumes:
     - /etc/localtime:/etc/localtime:ro
-    - ./data/zabbix-server/alertscripts:/usr/lib/zabbix/alertscripts:ro
-    - ./data/zabbix-server/externalscripts:/usr/lib/zabbix/externalscripts:ro
-    - ./data/zabbix-server/export:/var/lib/zabbix/export:rw
-    - ./data/zabbix-server/modules:/var/lib/zabbix/modules:ro
-    - ./data/zabbix-server/enc:/var/lib/zabbix/enc:ro
-    - ./data/zabbix-server/ssh_keys:/var/lib/zabbix/ssh_keys:ro
-    - ./data/zabbix-server/mibs:/var/lib/zabbix/mibs:ro
-    - ./data/zabbix-server/ssl/certs:/var/lib/zabbix/ssl/certs:ro
-    - ./data/zabbix-server/ssl/keys:/var/lib/zabbix/ssl/keys:ro
-    - ./data/zabbix-server/ssl/ssl_ca:/var/lib/zabbix/ssl/ssl_ca:ro
+    - zabbix-server-alertscripts:/usr/lib/zabbix/alertscripts:ro
+    - zabbix-server-externalscripts:/usr/lib/zabbix/externalscripts:ro
 
 services:
   # ---------------------------------------------------------------------------
@@ -63,11 +57,13 @@ services:
     restart: unless-stopped
     env_file: ./monitoring-data/zabbix-server/zabbix-server.env
     environment:
-      ZBX_HANODENAME: ${NODE_NAME:?Defina NODE_NAME no .env}
-      ZBX_NODEADDRESS: ${NODE_IP:?Defina NODE_IP no .env}:${ZBX_SERVER_PORT:-10051}
+      ZBX_HANODENAME: ${NODE_NAME:?Defina NODE_NAME nas variáveis da stack no Portainer}
+      ZBX_NODEADDRESS: ${NODE_IP:?Defina NODE_IP nas variáveis da stack no Portainer}:${ZBX_SERVER_PORT:-10051}
       ZBX_JAVAGATEWAY: zabbix-java-gateway
       ZBX_WEBSERVICEURL: http://zabbix-web-service:10053/report
       ZBX_WEBDRIVERURL: http://selenium:4444
+      POSTGRES_PASSWORD: ${ZBX_DB_PASSWORD:?Defina ZBX_DB_PASSWORD nas variáveis da stack no Portainer}
+      ZBX_TELEMETRYPROVIDER_0_PASSWORD: ${CLICKHOUSE_PASSWORD:?Defina CLICKHOUSE_PASSWORD nas variáveis da stack no Portainer}
       TZ: ${TZ:-America/Sao_Paulo}
     ports:
       - "${BIND_IP:-0.0.0.0}:${ZBX_SERVER_PORT:-10051}:10051"
@@ -82,25 +78,25 @@ services:
   # Zabbix web (nginx). Sem ZBX_SERVER_HOST: em HA o frontend descobre o nó
   # ativo pelo banco. Também publica o Catálogo em /catalogo/.
   # ---------------------------------------------------------------------------
+  # A imagem é construída a partir de config/zabbix-web/ (nginx com o /catalogo/).
+  # O TLS termina no F5, então o web publica só HTTP.
   zabbix-web:
-    image: zabbix/zabbix-web-nginx-pgsql:${ZABBIX_TAG:-alpine-trunk}
+    build:
+      context: ./config/zabbix-web
+      args:
+        ZABBIX_TAG: ${ZABBIX_TAG:-alpine-trunk}
+    image: monitoramento/zabbix-web:${ZABBIX_TAG:-alpine-trunk}
     container_name: zabbix-web
     restart: unless-stopped
     env_file: ./monitoring-data/zabbix-web/zabbix-web.env
     environment:
+      POSTGRES_PASSWORD: ${ZBX_DB_PASSWORD:?Defina ZBX_DB_PASSWORD nas variáveis da stack no Portainer}
+      ZBX_TELEMETRYPROVIDER_0_PASSWORD: ${CLICKHOUSE_PASSWORD:?Defina CLICKHOUSE_PASSWORD nas variáveis da stack no Portainer}
       TZ: ${TZ:-America/Sao_Paulo}
     ports:
       - "${BIND_IP:-0.0.0.0}:${WEB_HTTP_PORT:-80}:8080"
-      - "${BIND_IP:-0.0.0.0}:${WEB_HTTPS_PORT:-443}:8443"
     volumes:
       - /etc/localtime:/etc/localtime:ro
-      # Certificado do HTTPS (ssl.crt, ssl.key, dhparam.pem). Sem eles, só HTTP.
-      - ./data/zabbix-web/ssl:/etc/ssl/nginx:ro
-      - ./data/zabbix-web/modules:/usr/share/zabbix/modules:ro
-      # /catalogo/ -> container catalogo (ver config/zabbix-web/)
-      - ./config/zabbix-web/catalogo.conf:/etc/nginx/catalogo/catalogo.conf:ro
-      - ./config/zabbix-web/nginx.conf:/etc/zabbix/nginx.conf:ro
-      - ./config/zabbix-web/nginx_ssl.conf:/etc/zabbix/nginx_ssl.conf:ro
     tmpfs:
       - /tmp
       - /var/lib/php/session:mode=1777
@@ -127,25 +123,19 @@ services:
     restart: unless-stopped
     env_file: ./monitoring-data/zabbix-proxy/zabbix-proxy.env
     environment:
-      ZBX_HOSTNAME: proxy-${NODE_NAME:?Defina NODE_NAME no .env}
-      ZBX_SERVER_HOST: ${ZBX_HA_NODES:?Defina ZBX_HA_NODES no .env}
+      ZBX_HOSTNAME: proxy-${NODE_NAME:?Defina NODE_NAME nas variáveis da stack no Portainer}
+      ZBX_SERVER_HOST: ${ZBX_HA_NODES:?Defina ZBX_HA_NODES nas variáveis da stack no Portainer}
       ZBX_JAVAGATEWAY: zabbix-java-gateway
       ZBX_WEBDRIVERURL: http://selenium:4444
+      ZBX_TELEMETRYPROVIDER_0_PASSWORD: ${CLICKHOUSE_PASSWORD:?Defina CLICKHOUSE_PASSWORD nas variáveis da stack no Portainer}
       TZ: ${TZ:-America/Sao_Paulo}
     ports:
       - "${BIND_IP:-0.0.0.0}:${ZBX_PROXY_PORT:-10061}:10051"
       - "${BIND_IP:-0.0.0.0}:${ZBX_PROXY_APM_PORT:-4317}:4317"
     volumes:
       - /etc/localtime:/etc/localtime:ro
-      - ./data/zabbix-proxy/db_data:/var/lib/zabbix/db_data:rw
-      - ./data/zabbix-proxy/externalscripts:/usr/lib/zabbix/externalscripts:ro
-      - ./data/zabbix-proxy/modules:/var/lib/zabbix/modules:ro
-      - ./data/zabbix-proxy/enc:/var/lib/zabbix/enc:ro
-      - ./data/zabbix-proxy/ssh_keys:/var/lib/zabbix/ssh_keys:ro
-      - ./data/zabbix-proxy/mibs:/var/lib/zabbix/mibs:ro
-      - ./data/zabbix-proxy/ssl/certs:/var/lib/zabbix/ssl/certs:ro
-      - ./data/zabbix-proxy/ssl/keys:/var/lib/zabbix/ssl/keys:ro
-      - ./data/zabbix-proxy/ssl/ssl_ca:/var/lib/zabbix/ssl/ssl_ca:ro
+      - zabbix-proxy-data:/var/lib/zabbix/db_data:rw
+      - zabbix-proxy-externalscripts:/usr/lib/zabbix/externalscripts:ro
     tmpfs:
       - /tmp
       - /var/lib/zabbix/ssl/ssl_ca_internal:mode=770,uid=1997,gid=0
@@ -231,67 +221,68 @@ services:
   # mostram os mesmos dashboards atrás do F5)
   # ---------------------------------------------------------------------------
   grafana:
-    image: grafana/grafana:${GRAFANA_TAG:-13.2.4}
+    build:
+      context: ./config/grafana
+      args:
+        GRAFANA_TAG: ${GRAFANA_TAG:-13.2.4}
+    image: monitoramento/grafana:${GRAFANA_TAG:-13.2.4}
     container_name: grafana
     restart: unless-stopped
     user: "472:0"
     env_file: ./monitoring-data/grafana/grafana.env
     environment:
       GF_UNIFIED_ALERTING_HA_PEERS: ${GRAFANA_HA_PEERS:-}
-      GF_UNIFIED_ALERTING_HA_ADVERTISE_ADDRESS: ${NODE_IP:?Defina NODE_IP no .env}:${GRAFANA_HA_PORT:-9094}
+      GF_UNIFIED_ALERTING_HA_ADVERTISE_ADDRESS: ${NODE_IP:?Defina NODE_IP nas variáveis da stack no Portainer}:${GRAFANA_HA_PORT:-9094}
       GF_UNIFIED_ALERTING_HA_LISTEN_ADDRESS: 0.0.0.0:9094
+      GF_DATABASE_PASSWORD: ${GRAFANA_DB_PASSWORD:?Defina GRAFANA_DB_PASSWORD nas variáveis da stack no Portainer}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Defina GRAFANA_ADMIN_PASSWORD nas variáveis da stack no Portainer}
+      GF_SECURITY_SECRET_KEY: ${GRAFANA_SECRET_KEY:?Defina GRAFANA_SECRET_KEY nas variáveis da stack no Portainer}
+      ZABBIX_API_TOKEN: ${ZABBIX_API_TOKEN:-}
       TZ: ${TZ:-America/Sao_Paulo}
     ports:
       - "${BIND_IP:-0.0.0.0}:${GRAFANA_PORT:-3000}:3000"
       - "${BIND_IP:-0.0.0.0}:${GRAFANA_HA_PORT:-9094}:9094/tcp"
       - "${BIND_IP:-0.0.0.0}:${GRAFANA_HA_PORT:-9094}:9094/udp"
     volumes:
-      - ./data/grafana:/var/lib/grafana
-      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
     <<: *default-logging
     networks: [monitoring]
 
   # ---------------------------------------------------------------------------
-  # Portainer agent (gerenciado pelo Portainer server corporativo)
-  # ---------------------------------------------------------------------------
-  portainer-agent:
-    image: portainer/agent:${PORTAINER_AGENT_TAG:-latest}
-    container_name: portainer-agent
-    restart: unless-stopped
-    env_file: ./monitoring-data/portainer-agent/portainer-agent.env
-    ports:
-      - "${BIND_IP:-0.0.0.0}:${PORTAINER_AGENT_PORT:-9001}:9001"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /var/lib/docker/volumes:/var/lib/docker/volumes
-      - /:/host
-    <<: *default-logging
-    networks: [monitoring]
-
-  # ---------------------------------------------------------------------------
-  # Catálogo de Monitoramento (publicado em /catalogo/ pelo zabbix-web)
+  # Catálogo de Monitoramento (publicado em /catalogo/ pelo zabbix-web).
+  # As regras ficam em catalogo/config/rules.yaml, dentro da imagem.
   # ---------------------------------------------------------------------------
   catalogo:
     build: ./catalogo
-    image: catalogo-monitoramento:latest
+    image: monitoramento/catalogo:latest
     container_name: catalogo
     restart: unless-stopped
     env_file: ./monitoring-data/catalogo/catalogo.env
     environment:
       BASE_PATH: /catalogo
       COLLECT_AT: ${CATALOGO_COLLECT_AT:-03:30}
+      ZBX_DB_PASSWORD: ${CATALOGO_DB_PASSWORD:?Defina CATALOGO_DB_PASSWORD nas variáveis da stack no Portainer}
+      ADMIN_TOKEN: ${CATALOGO_ADMIN_TOKEN:-}
+      BASIC_AUTH_PASSWORD: ${CATALOGO_BASIC_AUTH_PASSWORD:-}
       TZ: ${TZ:-America/Sao_Paulo}
     ports:
       - "${BIND_IP:-0.0.0.0}:${CATALOGO_PORT:-8088}:8080"
     volumes:
-      - ./data/catalogo:/data
-      - ./monitoring-data/catalogo/rules.yaml:/config/rules.yaml:ro
+      - catalogo-data:/data
     deploy:
       resources:
         limits:
           memory: 1g
     <<: *default-logging
     networks: [monitoring]
+
+volumes:
+  zabbix-server-alertscripts:
+  zabbix-server-externalscripts:
+  zabbix-proxy-data:
+  zabbix-proxy-externalscripts:
+  grafana-data:
+  catalogo-data:
 
 networks:
   monitoring:
