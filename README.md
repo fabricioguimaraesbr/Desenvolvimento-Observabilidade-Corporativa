@@ -44,14 +44,14 @@ Branch `HML-Corp`: ambiente de homologação corporativo.
 | Container | Imagem | Portas no servidor |
 |---|---|---|
 | `zabbix-server` | `zabbix/zabbix-server-pgsql:alpine-trunk` | 10051 |
-| `zabbix-web` | build de `config/zabbix-web/` (`zabbix/zabbix-web-nginx-pgsql:alpine-trunk` + `/catalogo/`) | 80 |
+| `zabbix-web` | GitLab CI a partir de `config/zabbix-web/` (`zabbix/zabbix-web-nginx-pgsql:alpine-trunk` + `/catalogo/`) | 80 |
 | `zabbix-proxy` | `zabbix/zabbix-proxy-sqlite3:alpine-trunk` | 10061 (trapper), 4317 (APM/OTLP) |
 | `zabbix-java-gateway` | `zabbix/zabbix-java-gateway:alpine-trunk` | só rede interna |
 | `zabbix-web-service` | `zabbix/zabbix-web-service:alpine-trunk` | só rede interna |
 | `zabbix-mcp-server` | `zabbix/zabbix-mcp-server:alpine-trunk` | 8444 |
 | `selenium` | `selenium/standalone-chrome:latest` | só rede interna |
-| `grafana` | build de `config/grafana/` (`grafana/grafana:13.2.4` + plugin e datasource do Zabbix) | 3000, 9094 (HA do alerting) |
-| `catalogo` | build de `catalogo/` | 8088 (diagnóstico; o acesso normal é `/catalogo/` no web) |
+| `grafana` | GitLab CI a partir de `config/grafana/` (`grafana/grafana:13.2.4` + plugin, datasource e LDAP) | 3000, 9094 (HA do alerting) |
+| `catalogo` | GitLab CI a partir de `catalogo/` | 8088 (diagnóstico; o acesso normal é `/catalogo/` no web) |
 
 > **Sobre o trunk:** `alpine-trunk` é o Zabbix **8.0 em desenvolvimento** (hoje 8.0.0rc3). A imagem muda a cada build. Para fixar uma versão, defina `ZABBIX_TAG` nas variáveis da stack, por exemplo para a tag 8.0 estável quando sair.
 
@@ -59,6 +59,7 @@ Branch `HML-Corp`: ambiente de homologação corporativo.
 
 ```
 docker-compose.yml          stack de um servidor (igual nos 3)
+.gitlab-ci.yml              constrói as imagens próprias e publica no registry do GitLab
 portainer.env.example       lista das variáveis da stack no Portainer (senhas e valores de cada servidor)
 monitoring-data/<container>/<container>.env   demais variáveis de cada container (sem senhas)
 config/
@@ -82,7 +83,8 @@ catalogo/                   Catálogo de Monitoramento (código, regras, testes,
 ### Por que algumas configs viram imagem
 
 O Portainer CE clona o repositório e roda o compose a partir dele, mas **não monta arquivos do repositório dentro dos containers** (isso é o recurso *relative path volumes*, só da edição Business). Por isso:
-- o nginx do `/catalogo/` e o provisioning do Grafana entram em imagens construídas pela própria stack (`config/zabbix-web/` e `config/grafana/`);
+- o nginx do `/catalogo/` e as configs do Grafana entram em imagens próprias (`config/zabbix-web/` e `config/grafana/`), junto com o catálogo;
+- essas 3 imagens são construídas pelo **GitLab CI** e publicadas no registry do GitLab. A stack só baixa: o Portainer **não consegue fazer build num servidor ligado por agent** (o deploy falha com `failed to list workers ... http2: frame too large`);
 - os dados ficam em **volumes nomeados** do Docker (`zabbix-proxy-data`, `grafana-data`, `catalogo-data` e as pastas de scripts do Zabbix). O Docker cria os volumes com o dono certo, então ninguém precisa entrar no Linux para criar pastas.
 
 ## Passo a passo
@@ -96,11 +98,17 @@ No **DBxxx** (já existentes; só confira):
 
 No **Portainer**: os 3 servidores cadastrados como ambientes, cada um com o **Portainer agent** instalado à parte. O agent não fica nesta stack: se ficasse, todo redeploy derrubaria a conexão do próprio Portainer com o servidor no meio do deploy.
 
-No **GitLab**: um usuário ou *deploy token* com leitura no repositório, para o Portainer clonar.
+No **GitLab**:
+- um *deploy token* com `read_repository` (para o Portainer clonar) e `read_registry` (para baixar as imagens);
+- um **runner** que aceite Docker-in-Docker (`docker:dind`, executor Docker com `privileged = true`) e o **Container Registry** habilitado no projeto.
 
-### 2. Ajustar o que fica no Git
+No Portainer, cadastre o registry: *Registries → Add registry → GitLab* (ou *Custom registry*), com a URL do registry e o deploy token. Sem isso os servidores não conseguem baixar as imagens.
+
+### 2. Ajustar o que fica no Git e gerar as imagens
 
 Troque os nomes fictícios em `monitoring-data/*/*.env` (`DBxxx`, `empresa.com.br`, redes do MCP) e faça commit. Esses arquivos são **iguais nos 3 servidores**.
+
+O push dispara o pipeline (`.gitlab-ci.yml`), que publica `zabbix-web`, `grafana` e `catalogo` em *Deploy → Container Registry* com a tag da branch (`hml-corp`). Espere o pipeline terminar antes do primeiro deploy.
 
 ### 3. Criar uma stack por servidor no Portainer
 
@@ -113,14 +121,12 @@ Em cada um dos 3 ambientes: *Stacks → Add stack → Repository*.
 | Repository reference | `refs/heads/HML-Corp` |
 | Compose path | `docker-compose.yml` |
 | Authentication | usuário + token do GitLab |
-| GitOps updates | ligado (polling, ex.: 5 min, ou webhook do GitLab) |
+| GitOps updates | ligado, mecanismo **Webhook**, com *Re-pull image* marcado |
 | Environment variables | *Advanced mode*: cole `portainer.env.example` e preencha |
 
-Nas variáveis, só `NODE_NAME`, `NODE_IP` e `CATALOGO_COLLECT_AT` mudam entre as 3 stacks; o resto é igual. A `GRAFANA_SECRET_KEY` **precisa** ser a mesma nas 3. O `ZABBIX_API_TOKEN` fica vazio até o passo 4.
+`IMAGE_REGISTRY` é o endereço do registry do projeto (o `CI_REGISTRY_IMAGE`, que aparece em *Deploy → Container Registry*). Nas variáveis, só `NODE_NAME`, `NODE_IP` e `CATALOGO_COLLECT_AT` mudam entre as 3 stacks; o resto é igual. A `GRAFANA_SECRET_KEY` **precisa** ser a mesma nas 3. O `ZABBIX_API_TOKEN` fica vazio até o passo 4.
 
-O primeiro deploy demora mais porque constrói as imagens do Zabbix web, do Grafana e do catálogo.
-
-**Atualizações:** um commit no GitLab chega às 3 stacks pelo GitOps. Se mudar algo que vai dentro de uma imagem (`config/zabbix-web/`, `config/grafana/`, `catalogo/`), confira no primeiro teste se o redeploy reconstrói a imagem; se não reconstruir, use *Pull and redeploy* na stack.
+**Atualizações automáticas:** copie a URL do webhook de cada uma das 3 stacks e coloque as três, separadas por espaço, na variável de CI `PORTAINER_WEBHOOKS` do projeto (*Settings → CI/CD → Variables*, mascarada). A cada commit, o pipeline constrói as imagens e só **depois** chama os webhooks, e o Portainer baixa o Git e as imagens novas. Com polling, o Portainer poderia atualizar antes de as imagens ficarem prontas.
 
 ### 4. Configurar no frontend do Zabbix
 
@@ -199,7 +205,7 @@ O script confere:
 Tudo pelo Portainer, na stack de cada servidor:
 - **Mudar uma senha ou valor do servidor:** *Environment variables* → *Update the stack*.
 - **Mudar o resto:** commit no GitLab; o GitOps aplica nas 3 stacks.
-- **Atualizar as imagens do trunk:** *Pull and redeploy*, um servidor por vez.
+- **Atualizar as imagens do trunk:** rode o pipeline (ou agende-o semanalmente em *Build → Pipeline schedules*) e depois *Pull and redeploy*, um servidor por vez.
 - **Dados:** ficam nos volumes nomeados; remover ou recriar a stack não apaga os volumes.
 
 Para atualizar o trunk, faça **um servidor por vez**. Comece pelos standby e deixe o ativo por último. Quando o schema muda entre builds, o primeiro server a subir aplica o upgrade no banco.

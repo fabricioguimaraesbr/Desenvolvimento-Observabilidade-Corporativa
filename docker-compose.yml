@@ -9,9 +9,12 @@
 #                                      (lista em portainer.env.example)
 #   Demais variáveis dos containers:   monitoring-data/<container>/<container>.env (no Git)
 #   Dados persistentes:                volumes nomeados do Docker
+#   Imagens próprias (zabbix-web, grafana, catalogo): construídas pelo GitLab CI
+#   (.gitlab-ci.yml) e baixadas do registry do GitLab. O Portainer não faz build
+#   por meio do agent.
 #
 # Sem Portainer, na raiz do repositório: cp portainer.env.example .env,
-# preencha e rode docker compose up -d --build
+# preencha e rode docker compose up -d
 #
 # Detalhes no README.md.
 # =============================================================================
@@ -78,14 +81,11 @@ services:
   # Zabbix web (nginx). Sem ZBX_SERVER_HOST: em HA o frontend descobre o nó
   # ativo pelo banco. Também publica o Catálogo em /catalogo/.
   # ---------------------------------------------------------------------------
-  # A imagem é construída a partir de config/zabbix-web/ (nginx com o /catalogo/).
+  # Imagem do GitLab CI a partir de config/zabbix-web/ (nginx com o /catalogo/).
   # O TLS termina no F5, então o web publica só HTTP.
   zabbix-web:
-    build:
-      context: ./config/zabbix-web
-      args:
-        ZABBIX_TAG: ${ZABBIX_TAG:-alpine-trunk}
-    image: monitoramento/zabbix-web:${ZABBIX_TAG:-alpine-trunk}
+    image: ${IMAGE_REGISTRY:?Defina IMAGE_REGISTRY nas variáveis da stack no Portainer}/zabbix-web:${IMAGE_TAG:-hml-corp}
+    pull_policy: always
     container_name: zabbix-web
     restart: unless-stopped
     env_file: ./monitoring-data/zabbix-web/zabbix-web.env
@@ -220,12 +220,10 @@ services:
   # Grafana (banco compartilhado no PostgreSQL do DBxxx; os 3 servidores
   # mostram os mesmos dashboards atrás do F5)
   # ---------------------------------------------------------------------------
+  # Imagem do GitLab CI a partir de config/grafana/ (plugin do Zabbix, datasource e LDAP)
   grafana:
-    build:
-      context: ./config/grafana
-      args:
-        GRAFANA_TAG: ${GRAFANA_TAG:-13.2.4}
-    image: monitoramento/grafana:${GRAFANA_TAG:-13.2.4}
+    image: ${IMAGE_REGISTRY:?Defina IMAGE_REGISTRY nas variáveis da stack no Portainer}/grafana:${IMAGE_TAG:-hml-corp}
+    pull_policy: always
     container_name: grafana
     restart: unless-stopped
     user: "472:0"
@@ -251,11 +249,11 @@ services:
 
   # ---------------------------------------------------------------------------
   # Catálogo de Monitoramento (publicado em /catalogo/ pelo zabbix-web).
-  # As regras ficam em catalogo/config/rules.yaml, dentro da imagem.
+  # Imagem do GitLab CI a partir de catalogo/; as regras (config/rules.yaml) vão dentro dela.
   # ---------------------------------------------------------------------------
   catalogo:
-    build: ./catalogo
-    image: monitoramento/catalogo:latest
+    image: ${IMAGE_REGISTRY:?Defina IMAGE_REGISTRY nas variáveis da stack no Portainer}/catalogo:${IMAGE_TAG:-hml-corp}
+    pull_policy: always
     container_name: catalogo
     restart: unless-stopped
     env_file: ./monitoring-data/catalogo/catalogo.env
