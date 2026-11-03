@@ -1,0 +1,7 @@
+# Segredos
+.env
+.env.*
+!.env.example
+
+# Backups gerados por scripts/backup.sh
+backups/

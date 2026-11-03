@@ -1,0 +1,126 @@
+# =============================================================================
+# Evolution API - modelo para ambiente corporativo
+# -----------------------------------------------------------------------------
+# Padrão: API + Redis em container, PostgreSQL CORPORATIVO (externo).
+#
+#   Subir (produção, banco corporativo):  docker compose up -d
+#   Subir com Postgres local (testes):    docker compose --profile local-db up -d
+#   Subir também o Evolution Manager:     docker compose --profile manager up -d
+#
+# Todas as configurações ficam no arquivo .env (copie de .env.example).
+# =============================================================================
+
+name: evolution
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+services:
+  # ---------------------------------------------------------------------------
+  # Evolution API
+  # ---------------------------------------------------------------------------
+  api:
+    image: evoapicloud/evolution-api:${EVOLUTION_IMAGE_TAG:-v2.3.7}
+    container_name: evolution_api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Dentro do container a API sempre escuta na 8080.
+      # A porta exposta no host é definida por API_HOST_PORT (abaixo).
+      SERVER_PORT: "8080"
+      # Variáveis obrigatórias: o compose falha se não estiverem preenchidas.
+      SERVER_URL: ${SERVER_URL:?Defina SERVER_URL no .env}
+      AUTHENTICATION_API_KEY: ${AUTHENTICATION_API_KEY:?Defina AUTHENTICATION_API_KEY no .env}
+      DATABASE_CONNECTION_URI: ${DATABASE_CONNECTION_URI:?Defina DATABASE_CONNECTION_URI no .env}
+    ports:
+      - "${API_BIND_IP:-0.0.0.0}:${API_HOST_PORT:-8081}:8080"
+    volumes:
+      - evolution_instances:/evolution/instances
+    extra_hosts:
+      # Permite acessar serviços do próprio host (ex.: Postgres instalado no
+      # mesmo servidor do Docker) pelo nome host.docker.internal.
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+        required: false # só existe com --profile local-db
+    networks:
+      - evolution-net
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # Redis (cache) - sem porta publicada no host
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:${REDIS_IMAGE_TAG:-7-alpine}
+    container_name: evolution_redis
+    restart: unless-stopped
+    command: >
+      redis-server --appendonly yes --port 6379
+      --maxmemory ${REDIS_MAXMEMORY:-512mb} --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - evolution-net
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL local - OPCIONAL (apenas testes/homologação)
+  # Em produção use o Postgres corporativo (ver README.md).
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:${POSTGRES_IMAGE_TAG:-15-alpine}
+    container_name: evolution_postgres
+    profiles: ["local-db"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${LOCAL_DB_NAME:-evolution}
+      POSTGRES_USER: ${LOCAL_DB_USER:-evolution_user}
+      POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD:-troque_esta_senha}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - evolution-net
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # Evolution Manager (interface web) - OPCIONAL
+  # ---------------------------------------------------------------------------
+  manager:
+    image: evoapicloud/evolution-manager:${MANAGER_IMAGE_TAG:-latest}
+    container_name: evolution_manager
+    profiles: ["manager"]
+    restart: unless-stopped
+    ports:
+      - "${MANAGER_BIND_IP:-0.0.0.0}:${MANAGER_HOST_PORT:-3001}:80"
+    depends_on:
+      - api
+    networks:
+      - evolution-net
+    logging: *default-logging
+
+volumes:
+  evolution_instances:
+  redis_data:
+  postgres_data:
+
+networks:
+  evolution-net:
+    name: evolution-net
+    driver: bridge
