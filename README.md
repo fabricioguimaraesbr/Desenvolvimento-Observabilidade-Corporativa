@@ -54,10 +54,10 @@ O script libera `SELECT` só nas tabelas de configuração usadas. Se houver ré
 
 ```bash
 cp .env.example .env
-# edite: ZBX_DB_HOST, ZBX_DB_PASSWORD, ZABBIX_DOCKER_NETWORK, ZBX_FRONTEND_URL, COLLECT_AT
+# edite: ZBX_DB_HOST, ZBX_DB_PASSWORD, ZABBIX_DOCKER_NETWORK, ZABBIX_WEB_DOCKER_NETWORK, ZBX_FRONTEND_URL, COLLECT_AT
 ```
 
-`ZABBIX_DOCKER_NETWORK` é a rede docker onde está o container do PostgreSQL (`docker network ls`). `ZBX_DB_HOST` é o nome do serviço/container do banco nessa rede.
+`ZABBIX_DOCKER_NETWORK` é a rede docker onde está o container do PostgreSQL (`docker network ls`). `ZBX_DB_HOST` é o nome do serviço/container do banco nessa rede. `ZABBIX_WEB_DOCKER_NETWORK` é a rede do container `zabbix-web` (o nginx que atende `zabbix.empresa.com.br`); muitas vezes é a mesma.
 
 ### 3. Ajuste as regras
 
@@ -75,13 +75,55 @@ docker exec -it catalogo-monitoramento python -m app.cli testar-conexao
 docker logs -f catalogo-monitoramento        # acompanha a primeira coleta
 ```
 
-Acesse `http://<servidor>:8088`.
+Para conferir antes de publicar, acesse direto `http://<servidor>:8088`. O acesso oficial é por `https://zabbix.empresa.com.br/catalogo/` (próxima seção).
 
 Para forçar uma coleta fora do horário (requer `ADMIN_TOKEN` no `.env`):
 
 ```bash
-curl -X POST -H "X-Admin-Token: $ADMIN_TOKEN" http://<servidor>:8088/api/admin/collect
+curl -X POST -H "X-Admin-Token: $ADMIN_TOKEN" https://zabbix.empresa.com.br/catalogo/api/admin/collect
 ```
+
+### 5. Publique em zabbix.empresa.com.br/catalogo
+
+O catálogo fica no mesmo endereço do Zabbix, em `/catalogo/`. Quem faz isso é o nginx que já existe no container `zabbix-web-nginx-pgsql`: ele passa a encaminhar `/catalogo/` para o container `catalogo-monitoramento`. O resto do Zabbix não muda.
+
+```
+navegador ──▶ zabbix.empresa.com.br ──▶ zabbix-web (nginx)
+                                          ├─ /            → frontend do Zabbix (PHP), como hoje
+                                          └─ /catalogo/   → catalogo-monitoramento:8080
+```
+
+Os arquivos estão em `deploy/zabbix-web/`:
+
+| Arquivo | Uso |
+|---|---|
+| `catalogo.conf` | Regras do nginx para `/catalogo/` (redireciona `/catalogo`, `/Catalogo` e `/catálogo` para `/catalogo/`) |
+| `nginx.conf`, `nginx_ssl.conf` | Cópias das configs da imagem do Zabbix 7.0 com uma linha a mais: `include /etc/nginx/catalogo/*.conf;` |
+| `docker-compose.zabbix-web.example.yml` | Volumes para acrescentar ao serviço `zabbix-web` no compose do Zabbix |
+
+1. No `.env` do catálogo, mantenha `BASE_PATH=/catalogo` e confira `ZABBIX_WEB_DOCKER_NETWORK`. Suba com `docker compose up -d --build`.
+2. Compare as configs da sua imagem com as do repositório. Se forem iguais às de `deploy/zabbix-web/` sem a linha do `include`, pode usar as do repositório; se não, copie as suas e acrescente a linha `include /etc/nginx/catalogo/*.conf;` antes do `include ... server-common.conf;`.
+
+   ```bash
+   docker exec <container-zabbix-web> cat /etc/zabbix/nginx.conf /etc/zabbix/nginx_ssl.conf
+   ```
+
+3. No compose do Zabbix, acrescente ao serviço web os volumes de `deploy/zabbix-web/docker-compose.zabbix-web.example.yml` (ajuste o caminho do repositório). O `nginx_ssl.conf` só é necessário se o HTTPS for feito pelo próprio container.
+4. Recrie só o container web e teste:
+
+   ```bash
+   docker compose up -d zabbix-web-nginx-pgsql     # no diretório do compose do Zabbix
+   docker exec <container-zabbix-web> nginx -t
+   curl -I https://zabbix.empresa.com.br/catalogo            # 301 para /catalogo/
+   curl -s https://zabbix.empresa.com.br/catalogo/api/health
+   ```
+
+Detalhes:
+
+- O endereço do catálogo no nginx é `http://catalogo-monitoramento:8080`, o `container_name` do `docker-compose.yml`. Se mudar o nome, ajuste `catalogo.conf`.
+- O nginx resolve esse nome a cada requisição (DNS interno do Docker). Por isso o Zabbix sobe normalmente mesmo com o catálogo parado: só `/catalogo/` responde 502 até ele voltar, sem precisar reiniciar o zabbix-web.
+- A interface usa só caminhos relativos e funciona tanto em `/catalogo/` quanto direto na porta 8088. A documentação da API fica em `https://zabbix.empresa.com.br/catalogo/api/docs`.
+- Se a autenticação básica estiver ligada, o navegador pede usuário e senha só ao entrar no `/catalogo/`; o login do Zabbix não muda.
 
 ### Só para ver a interface (dados fictícios)
 
@@ -89,6 +131,10 @@ curl -X POST -H "X-Admin-Token: $ADMIN_TOKEN" http://<servidor>:8088/api/admin/c
 docker compose -f docker-compose.demo.yml up --build
 # http://localhost:8088
 ```
+
+## Interface
+
+O visual usa superfícies de vidro translúcido (desfoque e brilho sobre um fundo em gradiente), no estilo "Liquid Glass", mantendo o vermelho da marca na faixa principal, nas abas e nos destaques. Segue o modo claro/escuro do sistema. Quando o navegador não tem `backdrop-filter`, ou o usuário pede menos transparência (`prefers-reduced-transparency`), as superfícies ficam opacas. As animações respeitam `prefers-reduced-motion`.
 
 ## Regras: o que é uma aplicação
 
@@ -141,6 +187,7 @@ applications:
 | `COLLECT_ON_START` | `true` | Coleta ao iniciar o container. |
 | `ZBX_DB_STATEMENT_TIMEOUT` | `600` | Limite por consulta, em segundos. |
 | `BASIC_AUTH_USER` / `BASIC_AUTH_PASSWORD` | vazio | Autenticação básica opcional. |
+| `BASE_PATH` | vazio | Prefixo público atrás do nginx do Zabbix (`/catalogo`). |
 
 Para orientar o dimensionamento: o banco local ocupa poucas centenas de MB mesmo com milhões de itens, porque guarda agregados (contagens por host/tipo/chave) e a lista de triggers, não itens individuais.
 
@@ -177,6 +224,7 @@ app/
     build.py              monta o catálogo e aplica as regras
   static/                 interface (HTML/CSS/JS sem dependências externas; fonte embarcada)
 config/rules.yaml         regras de aplicação
+deploy/zabbix-web/        nginx do Zabbix publicando /catalogo/
 sql/                      usuário somente leitura
 tests/                    testes com a fonte demo (pytest)
 ```

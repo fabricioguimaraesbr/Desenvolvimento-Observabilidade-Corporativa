@@ -13,6 +13,7 @@
   const enc = encodeURIComponent;
   const html = (strings, ...vals) => strings.reduce((acc, s, i) => acc + s + (i < vals.length ? vals[i] : ""), "");
 
+  // Caminhos relativos: a interface funciona na raiz e atrás de um prefixo (ex.: /catalogo/)
   async function api(path) {
     const r = await fetch(path, { headers: { Accept: "application/json" } });
     const body = await r.json().catch(() => ({}));
@@ -86,7 +87,7 @@
 
   // -------------------------------------------------------------- início
   async function viewHome() {
-    const [sum, apps] = await Promise.all([api("/api/summary"), api("/api/apps")]);
+    const [sum, apps] = await Promise.all([api("api/summary"), api("api/apps")]);
     const m = sum.meta;
     const sevCounts = [0, 1, 2, 3, 4, 5].map((i) => (sum.severities.find((s) => s.priority === i) || {}).n || 0);
     let sort = "name";
@@ -102,7 +103,7 @@
               placeholder="Aplicação, host, IP, template, chave de item ou trigger">
             <button type="submit">Buscar</button>
           </form>
-          <p class="hero-hint">Experimente: ${["checkout", "pgsql", "certificate", "10.10."].map((x) => `<button type="button" data-try="${esc(x)}">${esc(x)}</button>`).join(", ")}</p>
+          <p class="hero-hint">Experimente: ${["checkout", "pgsql", "certificate", "10.10."].map((x) => `<button type="button" data-try="${esc(x)}">${esc(x)}</button>`).join("")}</p>
           <dl class="figures">
             <div class="figure"><dt>aplicações</dt><dd>${n(m.apps)}</dd></div>
             <div class="figure"><dt>hosts</dt><dd>${n(m.hosts)}</dd></div>
@@ -123,8 +124,8 @@
             <div class="tools">
               <label class="sr" for="appq">Filtrar aplicações</label>
               <input class="field" id="appq" type="search" placeholder="Filtrar por nome ou responsável">
-              <a class="btn" href="/api/export/apps.xlsx">Exportar Excel</a>
-              <a class="btn" href="/api/export/apps.csv">CSV</a>
+              <a class="btn" href="api/export/apps.xlsx">Exportar Excel</a>
+              <a class="btn" href="api/export/apps.csv">CSV</a>
             </div>
           </div>
           <div class="table-scroll"><table class="table" id="apps"></table></div>
@@ -189,7 +190,7 @@
   const APP_TABS = [["", "Visão geral"], ["hosts", "Hosts"], ["itens", "Itens"], ["triggers", "Triggers"], ["templates", "Templates"]];
 
   async function viewApp(slug, tab = "") {
-    const a = await api(`/api/apps/${enc(slug)}`);
+    const a = await api(`api/apps/${enc(slug)}`);
     document.title = `${a.name} · ${CONFIG.title}`;
     const counts = { hosts: a.hosts, itens: a.items, triggers: a.triggers, templates: a.templates.length };
     $main.innerHTML = html`
@@ -210,8 +211,8 @@
             <div class="figure"><dt>em problema</dt><dd>${n(a.problems)}</dd></div>
             <div class="figure"><dt>indisponíveis</dt><dd>${n(a.hosts_unavailable)}</dd></div>
             <div class="tools" style="align-self:end">
-              <a class="btn btn--band" href="/api/export/apps/${enc(slug)}.xlsx">Exportar Excel</a>
-              <a class="btn btn--band" href="/api/export/apps/${enc(slug)}.csv">CSV dos hosts</a>
+              <a class="btn btn--band" href="api/export/apps/${enc(slug)}.xlsx">Exportar Excel</a>
+              <a class="btn btn--band" href="api/export/apps/${enc(slug)}.csv">CSV dos hosts</a>
             </div>
           </dl>
         </div>
@@ -259,7 +260,7 @@
       <div class="table-scroll"><table class="table" id="ht"></table></div><div class="pager" id="hp"></div>`;
     const $t = document.getElementById("ht"), $p = document.getElementById("hp");
     async function load() {
-      const d = await api(`/api/apps/${enc(slug)}/hosts?q=${enc(q)}&status=${enc(status)}&page=${page}&size=50`);
+      const d = await api(`api/apps/${enc(slug)}/hosts?q=${enc(q)}&status=${enc(status)}&page=${page}&size=50`);
       $t.innerHTML = html`<thead><tr><th>Host</th><th class="hide-s">IP / DNS</th><th>Situação</th><th class="n">Itens</th><th class="n">Triggers</th><th class="n hide-s">Em problema</th><th class="hide-s">Proxy</th></tr></thead>
         <tbody>${d.rows.length ? d.rows.map((h) => html`<tr data-href="#/host/${h.hostid}">
           <td class="name"><a href="#/host/${h.hostid}">${esc(h.name)}</a>${h.name !== h.host ? `<small>${esc(h.host)}</small>` : ""}${h.scope === "partial" ? ` <span class="pill pill--part" title="Associado por ${esc(h.matched_by)}">parcial</span>` : ""}</td>
@@ -289,7 +290,7 @@
       </div>`;
     const $t = document.getElementById("it");
     async function load(q = "") {
-      const d = await api(`/api/apps/${enc(slug)}/items?q=${enc(q)}`);
+      const d = await api(`api/apps/${enc(slug)}/items?q=${enc(q)}`);
       $t.innerHTML = html`<thead><tr><th>Chave</th><th class="n">Itens</th><th class="n">Hosts</th></tr></thead>
         <tbody>${d.families.length ? d.families.map((f) => html`<tr>
           <td class="name"><span class="mono">${esc(f.key_base)}</span><small>${esc(f.sample_name)}</small></td>
@@ -317,7 +318,7 @@
     const $t = document.getElementById("tt"), $p = document.getElementById("tpg"), $l = document.getElementById("tl");
     const drawLegend = () => { $l.innerHTML = legend(counts, sev, true); };
     async function load() {
-      const d = await api(`/api/apps/${enc(slug)}/triggers?q=${enc(q)}&page=${page}&size=50${sev != null ? `&severity=${sev}` : ""}${problems ? "&problems=true" : ""}`);
+      const d = await api(`api/apps/${enc(slug)}/triggers?q=${enc(q)}&page=${page}&size=50${sev != null ? `&severity=${sev}` : ""}${problems ? "&problems=true" : ""}`);
       $t.innerHTML = html`<thead><tr><th>Trigger</th><th>Severidade</th><th class="n">Hosts</th><th class="n">Em problema</th><th class="n hide-s">Desativadas</th></tr></thead>
         <tbody>${d.rows.length ? d.rows.map((t) => html`<tr>
           <td>${esc(t.description)}</td><td style="white-space:nowrap"><i class="dot s${t.priority}"></i>${esc(t.severity)}</td>
@@ -338,8 +339,8 @@
   function tabTemplates($el, a) {
     $el.innerHTML = html`
       <div class="section__head"><div><h2 class="h2">Templates</h2><p class="sub">Templates vinculados diretamente aos hosts da aplicação.</p></div></div>
-      ${a.templates.length ? `<table class="table"><thead><tr><th>Template</th><th class="n">Hosts</th></tr></thead><tbody>
-        ${a.templates.map((t) => `<tr><td><a href="#/busca?q=${enc(t.name)}">${esc(t.name)}</a></td><td class="n">${n(t.hosts)}</td></tr>`).join("")}</tbody></table>`
+      ${a.templates.length ? `<div class="table-scroll"><table class="table"><thead><tr><th>Template</th><th class="n">Hosts</th></tr></thead><tbody>
+        ${a.templates.map((t) => `<tr><td><a href="#/busca?q=${enc(t.name)}">${esc(t.name)}</a></td><td class="n">${n(t.hosts)}</td></tr>`).join("")}</tbody></table></div>`
         : `<p class="sub">Nenhum template vinculado diretamente.</p>`}`;
   }
 
@@ -359,7 +360,7 @@
 
   // ------------------------------------------------------------------ host
   async function viewHost(id) {
-    const h = await api(`/api/hosts/${enc(id)}`);
+    const h = await api(`api/hosts/${enc(id)}`);
     document.title = `${h.name} · ${CONFIG.title}`;
     const sev = [0, 1, 2, 3, 4, 5].map((i) => h.triggers.filter((t) => t.priority === i && t.status === 0).length);
     const first = h.apps[0];
@@ -418,7 +419,7 @@
 
   // ----------------------------------------------------------------- busca
   async function viewSearch(q) {
-    const d = await api(`/api/search?q=${enc(q)}`);
+    const d = await api(`api/search?q=${enc(q)}`);
     document.getElementById("topq").value = q;
     document.title = `Busca: ${q} · ${CONFIG.title}`;
     const total = d.apps.length + d.hosts.length + d.templates.length + d.items.length + d.triggers.length;
@@ -450,8 +451,8 @@
       rowLink(ev);
       const b = ev.target.closest("[data-tpl],[data-key]");
       if (!b) return;
-      const rows = b.dataset.tpl != null ? await api(`/api/templates/apps?name=${enc(d.templates[b.dataset.tpl].name)}`)
-        : await api(`/api/items/apps?key=${enc(d.items[b.dataset.key].key_base)}`);
+      const rows = b.dataset.tpl != null ? await api(`api/templates/apps?name=${enc(d.templates[b.dataset.tpl].name)}`)
+        : await api(`api/items/apps?key=${enc(d.items[b.dataset.key].key_base)}`);
       b.parentElement.innerHTML = rows.length ? `<div class="chips">${rows.map((r) => `<a class="chip" href="#/app/${enc(r.slug)}">${esc(r.name)} <b>${n(r.hosts)}</b></a>`).join("")}</div>` : `<span class="zero">Nenhuma aplicação</span>`;
     });
   }
@@ -472,7 +473,7 @@
       </div></section>`;
     const $t = document.getElementById("ut"), $p = document.getElementById("up");
     async function load() {
-      const d = await api(`/api/unmapped?q=${enc(q)}&page=${page}`);
+      const d = await api(`api/unmapped?q=${enc(q)}&page=${page}`);
       $t.innerHTML = html`<thead><tr><th>Host</th><th>Host groups</th><th>Situação</th><th class="n">Itens</th></tr></thead><tbody>
         ${d.rows.length ? d.rows.map((h) => `<tr data-href="#/host/${h.hostid}"><td class="name"><a href="#/host/${h.hostid}">${esc(h.name)}</a>${h.name !== h.host ? `<small>${esc(h.host)}</small>` : ""}</td><td>${esc(h.groups || "")}</td><td>${hostStatus(h)}</td><td class="n">${n(h.items)}</td></tr>`).join("")
           : `<tr><td colspan="4" class="zero">Todos os hosts estão em alguma aplicação.</td></tr>`}</tbody>`;
@@ -485,7 +486,7 @@
 
   // ------------------------------------------------------------- sobre
   async function viewAbout() {
-    const c = await api("/api/health");
+    const c = await api("api/health");
     document.title = `Como funciona · ${CONFIG.title}`;
     $main.innerHTML = html`
       <section class="band"><div class="wrap">
@@ -546,7 +547,7 @@
   });
   window.addEventListener("hashchange", route);
 
-  api("/api/config").then((c) => {
+  api("api/config").then((c) => {
     CONFIG = c;
     document.querySelector("[data-title]").textContent = c.title;
     const last = c.collector?.last_finished;
