@@ -1,5 +1,4 @@
-# Zabbix web com o /catalogo/ no nginx. As configs vão dentro da imagem porque o
-# Portainer CE não monta arquivos do repositório Git nos containers.
+# Zabbix web com o /catalogo/ no nginx.
 ARG ZABBIX_TAG=alpine-trunk
 FROM zabbix/zabbix-web-nginx-pgsql:${ZABBIX_TAG}
 COPY --chown=1997:0 nginx.conf nginx_ssl.conf /etc/zabbix/

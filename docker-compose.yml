@@ -4,17 +4,15 @@
 # A mesma stack roda nos 3 servidores. O Zabbix server fica em HA entre eles e
 # o PostgreSQL e o ClickHouse já existentes ficam no servidor DBxxx.
 #
-# Feita para o Portainer CE (stack do tipo Repository, apontando para o GitLab):
-#   Senhas e valores de cada servidor: variáveis da stack no Portainer
-#                                      (lista em portainer.env.example)
-#   Demais variáveis dos containers:   monitoring-data/<container>/<container>.env (no Git)
-#   Dados persistentes:                volumes nomeados do Docker
-#   Imagens próprias (zabbix-web, grafana, catalogo): construídas pelo GitLab CI
-#   (.gitlab-ci.yml) e baixadas do registry do GitLab. O Portainer não faz build
-#   por meio do agent.
+# Roda direto no servidor, na raiz do repositório:
+#   Senhas e valores deste servidor: .env (copie de .env.example; fora do Git)
+#   Demais variáveis dos containers: monitoring-data/<container>/<container>.env (no Git)
+#   Dados persistentes:              volumes nomeados do Docker
 #
-# Sem Portainer, na raiz do repositório: cp portainer.env.example .env,
-# preencha e rode docker compose up -d
+#   cp .env.example .env    # só na primeira vez; preencha
+#   docker compose up -d --build
+#
+# Para atualizar: git pull && docker compose up -d --build
 #
 # Detalhes no README.md.
 # =============================================================================
@@ -60,13 +58,13 @@ services:
     restart: unless-stopped
     env_file: ./monitoring-data/zabbix-server/zabbix-server.env
     environment:
-      ZBX_HANODENAME: ${NODE_NAME:?Defina NODE_NAME nas variáveis da stack no Portainer}
-      ZBX_NODEADDRESS: ${NODE_IP:?Defina NODE_IP nas variáveis da stack no Portainer}:${ZBX_SERVER_PORT:-10051}
+      ZBX_HANODENAME: ${NODE_NAME:?Defina NODE_NAME no .env}
+      ZBX_NODEADDRESS: ${NODE_IP:?Defina NODE_IP no .env}:${ZBX_SERVER_PORT:-10051}
       ZBX_JAVAGATEWAY: zabbix-java-gateway
       ZBX_WEBSERVICEURL: http://zabbix-web-service:10053/report
       ZBX_WEBDRIVERURL: http://selenium:4444
-      POSTGRES_PASSWORD: ${ZBX_DB_PASSWORD:?Defina ZBX_DB_PASSWORD nas variáveis da stack no Portainer}
-      ZBX_TELEMETRYPROVIDER_0_PASSWORD: ${CLICKHOUSE_PASSWORD:?Defina CLICKHOUSE_PASSWORD nas variáveis da stack no Portainer}
+      POSTGRES_PASSWORD: ${ZBX_DB_PASSWORD:?Defina ZBX_DB_PASSWORD no .env}
+      ZBX_TELEMETRYPROVIDER_0_PASSWORD: ${CLICKHOUSE_PASSWORD:?Defina CLICKHOUSE_PASSWORD no .env}
       TZ: ${TZ:-America/Sao_Paulo}
     ports:
       - "${BIND_IP:-0.0.0.0}:${ZBX_SERVER_PORT:-10051}:10051"
@@ -81,17 +79,20 @@ services:
   # Zabbix web (nginx). Sem ZBX_SERVER_HOST: em HA o frontend descobre o nó
   # ativo pelo banco. Também publica o Catálogo em /catalogo/.
   # ---------------------------------------------------------------------------
-  # Imagem do GitLab CI a partir de config/zabbix-web/ (nginx com o /catalogo/).
+  # Imagem construída a partir de config/zabbix-web/ (nginx com o /catalogo/).
   # O TLS termina no F5, então o web publica só HTTP.
   zabbix-web:
-    image: ${IMAGE_REGISTRY:?Defina IMAGE_REGISTRY nas variáveis da stack no Portainer}/zabbix-web:${IMAGE_TAG:-hml-corp}
-    pull_policy: always
+    build:
+      context: ./config/zabbix-web
+      args:
+        ZABBIX_TAG: ${ZABBIX_TAG:-alpine-trunk}
+    image: monitoramento/zabbix-web:${ZABBIX_TAG:-alpine-trunk}
     container_name: zabbix-web
     restart: unless-stopped
     env_file: ./monitoring-data/zabbix-web/zabbix-web.env
     environment:
-      POSTGRES_PASSWORD: ${ZBX_DB_PASSWORD:?Defina ZBX_DB_PASSWORD nas variáveis da stack no Portainer}
-      ZBX_TELEMETRYPROVIDER_0_PASSWORD: ${CLICKHOUSE_PASSWORD:?Defina CLICKHOUSE_PASSWORD nas variáveis da stack no Portainer}
+      POSTGRES_PASSWORD: ${ZBX_DB_PASSWORD:?Defina ZBX_DB_PASSWORD no .env}
+      ZBX_TELEMETRYPROVIDER_0_PASSWORD: ${CLICKHOUSE_PASSWORD:?Defina CLICKHOUSE_PASSWORD no .env}
       TZ: ${TZ:-America/Sao_Paulo}
     ports:
       - "${BIND_IP:-0.0.0.0}:${WEB_HTTP_PORT:-80}:8080"
@@ -123,11 +124,11 @@ services:
     restart: unless-stopped
     env_file: ./monitoring-data/zabbix-proxy/zabbix-proxy.env
     environment:
-      ZBX_HOSTNAME: proxy-${NODE_NAME:?Defina NODE_NAME nas variáveis da stack no Portainer}
-      ZBX_SERVER_HOST: ${ZBX_HA_NODES:?Defina ZBX_HA_NODES nas variáveis da stack no Portainer}
+      ZBX_HOSTNAME: proxy-${NODE_NAME:?Defina NODE_NAME no .env}
+      ZBX_SERVER_HOST: ${ZBX_HA_NODES:?Defina ZBX_HA_NODES no .env}
       ZBX_JAVAGATEWAY: zabbix-java-gateway
       ZBX_WEBDRIVERURL: http://selenium:4444
-      ZBX_TELEMETRYPROVIDER_0_PASSWORD: ${CLICKHOUSE_PASSWORD:?Defina CLICKHOUSE_PASSWORD nas variáveis da stack no Portainer}
+      ZBX_TELEMETRYPROVIDER_0_PASSWORD: ${CLICKHOUSE_PASSWORD:?Defina CLICKHOUSE_PASSWORD no .env}
       TZ: ${TZ:-America/Sao_Paulo}
     ports:
       - "${BIND_IP:-0.0.0.0}:${ZBX_PROXY_PORT:-10061}:10051"
@@ -220,23 +221,26 @@ services:
   # Grafana (banco compartilhado no PostgreSQL do DBxxx; os 3 servidores
   # mostram os mesmos dashboards atrás do F5)
   # ---------------------------------------------------------------------------
-  # Imagem do GitLab CI a partir de config/grafana/ (plugin do Zabbix, datasource e LDAP)
+  # Imagem construída a partir de config/grafana/ (plugin do Zabbix, datasource e LDAP)
   grafana:
-    image: ${IMAGE_REGISTRY:?Defina IMAGE_REGISTRY nas variáveis da stack no Portainer}/grafana:${IMAGE_TAG:-hml-corp}
-    pull_policy: always
+    build:
+      context: ./config/grafana
+      args:
+        GRAFANA_TAG: ${GRAFANA_TAG:-13.2.4}
+    image: monitoramento/grafana:${GRAFANA_TAG:-13.2.4}
     container_name: grafana
     restart: unless-stopped
     user: "472:0"
     env_file: ./monitoring-data/grafana/grafana.env
     environment:
       GF_UNIFIED_ALERTING_HA_PEERS: ${GRAFANA_HA_PEERS:-}
-      GF_UNIFIED_ALERTING_HA_ADVERTISE_ADDRESS: ${NODE_IP:?Defina NODE_IP nas variáveis da stack no Portainer}:${GRAFANA_HA_PORT:-9094}
+      GF_UNIFIED_ALERTING_HA_ADVERTISE_ADDRESS: ${NODE_IP:?Defina NODE_IP no .env}:${GRAFANA_HA_PORT:-9094}
       GF_UNIFIED_ALERTING_HA_LISTEN_ADDRESS: 0.0.0.0:9094
-      GF_DATABASE_PASSWORD: ${GRAFANA_DB_PASSWORD:?Defina GRAFANA_DB_PASSWORD nas variáveis da stack no Portainer}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Defina GRAFANA_ADMIN_PASSWORD nas variáveis da stack no Portainer}
-      GF_SECURITY_SECRET_KEY: ${GRAFANA_SECRET_KEY:?Defina GRAFANA_SECRET_KEY nas variáveis da stack no Portainer}
+      GF_DATABASE_PASSWORD: ${GRAFANA_DB_PASSWORD:?Defina GRAFANA_DB_PASSWORD no .env}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Defina GRAFANA_ADMIN_PASSWORD no .env}
+      GF_SECURITY_SECRET_KEY: ${GRAFANA_SECRET_KEY:?Defina GRAFANA_SECRET_KEY no .env}
       ZABBIX_API_TOKEN: ${ZABBIX_API_TOKEN:-}
-      LDAP_BIND_PASSWORD: ${LDAP_BIND_PASSWORD:?Defina LDAP_BIND_PASSWORD nas variáveis da stack no Portainer}
+      LDAP_BIND_PASSWORD: ${LDAP_BIND_PASSWORD:?Defina LDAP_BIND_PASSWORD no .env}
       TZ: ${TZ:-America/Sao_Paulo}
     ports:
       - "${BIND_IP:-0.0.0.0}:${GRAFANA_PORT:-3000}:3000"
@@ -249,18 +253,18 @@ services:
 
   # ---------------------------------------------------------------------------
   # Catálogo de Monitoramento (publicado em /catalogo/ pelo zabbix-web).
-  # Imagem do GitLab CI a partir de catalogo/; as regras (config/rules.yaml) vão dentro dela.
+  # Imagem construída a partir de catalogo/; as regras (config/rules.yaml) vão dentro dela.
   # ---------------------------------------------------------------------------
   catalogo:
-    image: ${IMAGE_REGISTRY:?Defina IMAGE_REGISTRY nas variáveis da stack no Portainer}/catalogo:${IMAGE_TAG:-hml-corp}
-    pull_policy: always
+    build: ./catalogo
+    image: monitoramento/catalogo:latest
     container_name: catalogo
     restart: unless-stopped
     env_file: ./monitoring-data/catalogo/catalogo.env
     environment:
       BASE_PATH: /catalogo
       COLLECT_AT: ${CATALOGO_COLLECT_AT:-03:30}
-      ZBX_DB_PASSWORD: ${CATALOGO_DB_PASSWORD:?Defina CATALOGO_DB_PASSWORD nas variáveis da stack no Portainer}
+      ZBX_DB_PASSWORD: ${CATALOGO_DB_PASSWORD:?Defina CATALOGO_DB_PASSWORD no .env}
       ADMIN_TOKEN: ${CATALOGO_ADMIN_TOKEN:-}
       BASIC_AUTH_PASSWORD: ${CATALOGO_BASIC_AUTH_PASSWORD:-}
       TZ: ${TZ:-America/Sao_Paulo}

@@ -1,6 +1,6 @@
 # Monitoramento Corporativo
 
-Stack de monitoramento em Docker: **Zabbix 8.0 (trunk) em alta disponibilidade** em 3 servidores, com proxy, Java gateway, relatórios, MCP para agentes de IA, browser monitoring (Selenium), Grafana, Portainer agent e o [Catálogo de Monitoramento](catalogo/README.md).
+Stack de monitoramento em Docker: **Zabbix 8.0 (trunk) em alta disponibilidade** em 3 servidores, com proxy, Java gateway, relatórios, MCP para agentes de IA, browser monitoring (Selenium), Grafana e o [Catálogo de Monitoramento](catalogo/README.md).
 
 Branch `HML-Corp`: ambiente de homologação corporativo.
 
@@ -23,7 +23,6 @@ Branch `HML-Corp`: ambiente de homologação corporativo.
      │ mcp-server     │          │ mcp-server     │          │ mcp-server     │
      │ selenium       │          │ selenium       │          │ selenium       │
      │ grafana        │          │ grafana        │          │ grafana        │
-     │ portainer-agent│          │ portainer-agent│          │ portainer-agent│
      │ catalogo       │          │ catalogo       │          │ catalogo       │
      └───────┬────────┘          └───────┬────────┘          └───────┬────────┘
              └───────────────────────────┼───────────────────────────┘
@@ -33,7 +32,7 @@ Branch `HML-Corp`: ambiente de homologação corporativo.
                                 └─────────────────┘
 ```
 
-- **Uma stack por servidor.** O `docker-compose.yml` da raiz é o mesmo nos 3. Cada servidor é uma **stack no Portainer** ligada a este repositório no GitLab; o que muda entre elas fica só nas variáveis da stack: `NODE_NAME`, `NODE_IP` e horário de coleta do catálogo.
+- **Uma stack por servidor.** O `docker-compose.yml` da raiz é o mesmo nos 3. Cada servidor tem um clone do repositório e roda `docker compose` nele; o que muda entre os 3 fica só no `.env` de cada um: `NODE_NAME`, `NODE_IP` e horário de coleta do catálogo.
 - **HA do Zabbix server:** os 3 nós usam o mesmo banco; um fica ativo e os outros dois em standby. Se o ativo cai, um standby assume em cerca de 1 minuto. O frontend descobre sozinho o nó ativo pelo banco, por isso o web **não** tem `ZBX_SERVER_HOST`.
 - **Proxies:** um por servidor (`proxy-SRVxxx01`..03), cada um conhecendo os 3 nós do HA. No frontend eles formam um **proxy group**, que redistribui os hosts se um proxy cair. Os proxies também recebem **APM** (OpenTelemetry, OTLP gRPC na porta 4317) e gravam no ClickHouse.
 - **Banco:** PostgreSQL e ClickHouse ficam no **DBxxx** e já existem, com o schema do Zabbix 8.0 criado. A stack só aponta para eles pelas variáveis; não cria banco, usuário nem tabela.
@@ -44,14 +43,14 @@ Branch `HML-Corp`: ambiente de homologação corporativo.
 | Container | Imagem | Portas no servidor |
 |---|---|---|
 | `zabbix-server` | `zabbix/zabbix-server-pgsql:alpine-trunk` | 10051 |
-| `zabbix-web` | GitLab CI a partir de `config/zabbix-web/` (`zabbix/zabbix-web-nginx-pgsql:alpine-trunk` + `/catalogo/`) | 80 |
+| `zabbix-web` | build local de `config/zabbix-web/` (`zabbix/zabbix-web-nginx-pgsql:alpine-trunk` + `/catalogo/`) | 80 |
 | `zabbix-proxy` | `zabbix/zabbix-proxy-sqlite3:alpine-trunk` | 10061 (trapper), 4317 (APM/OTLP) |
 | `zabbix-java-gateway` | `zabbix/zabbix-java-gateway:alpine-trunk` | só rede interna |
 | `zabbix-web-service` | `zabbix/zabbix-web-service:alpine-trunk` | só rede interna |
 | `zabbix-mcp-server` | `zabbix/zabbix-mcp-server:alpine-trunk` | 8444 |
 | `selenium` | `selenium/standalone-chrome:latest` | só rede interna |
-| `grafana` | GitLab CI a partir de `config/grafana/` (`grafana/grafana:13.2.4` + plugin, datasource e LDAP) | 3000, 9094 (HA do alerting) |
-| `catalogo` | GitLab CI a partir de `catalogo/` | 8088 (diagnóstico; o acesso normal é `/catalogo/` no web) |
+| `grafana` | build local de `config/grafana/` (`grafana/grafana:13.2.4` + plugin, datasource e LDAP) | 3000, 9094 (HA do alerting) |
+| `catalogo` | build local de `catalogo/` | 8088 (diagnóstico; o acesso normal é `/catalogo/` no web) |
 
 > **Sobre o trunk:** `alpine-trunk` é o Zabbix **8.0 em desenvolvimento** (hoje 8.0.0rc3). A imagem muda a cada build. Para fixar uma versão, defina `ZABBIX_TAG` nas variáveis da stack, por exemplo para a tag 8.0 estável quando sair.
 
@@ -59,33 +58,27 @@ Branch `HML-Corp`: ambiente de homologação corporativo.
 
 ```
 docker-compose.yml          stack de um servidor (igual nos 3)
-.gitlab-ci.yml              constrói as imagens próprias e publica no registry do GitLab
-portainer.env.example       lista das variáveis da stack no Portainer (senhas e valores de cada servidor)
+.env.example                modelo do .env: senhas e valores de cada servidor
 monitoring-data/<container>/<container>.env   demais variáveis de cada container (sem senhas)
 config/
   zabbix-web/               Dockerfile + nginx com o /catalogo/
   grafana/                  Dockerfile + plugin e datasource do Zabbix + LDAP (ldap.toml, certs/)
   zabbix-web-service/       perfil seccomp do Chrome (relatórios PDF)
-scripts/validar.sh          checagens depois da subida (no shell do servidor)
+scripts/validar.sh          checagens depois da subida
 catalogo/                   Catálogo de Monitoramento (código, regras, testes, README próprio)
 ```
 
 ### Onde fica cada variável
 
-| Onde | O quê | Quem altera |
+| Arquivo | O quê | No Git? |
 |---|---|---|
-| **Variáveis da stack no Portainer** | senhas, token do Grafana e o que muda por servidor (`NODE_NAME`, `NODE_IP`, `CATALOGO_COLLECT_AT`). Lista completa em `portainer.env.example` | Pela tela do Portainer, em cada uma das 3 stacks |
-| **`monitoring-data/*/*.env` no Git** | todo o resto: endereço do DBxxx, usuários do banco, desempenho do Zabbix, Grafana, MCP, Selenium | Commit no GitLab; o Portainer aplica nas 3 stacks |
-| **`catalogo/config/rules.yaml` no Git** | regras do catálogo | Commit no GitLab |
+| **`.env`** (raiz) | senhas, token do Grafana e o que muda por servidor (`NODE_NAME`, `NODE_IP`, `CATALOGO_COLLECT_AT`) | **Não**: cada servidor tem o seu, criado a partir do `.env.example` |
+| `monitoring-data/*/*.env` | todo o resto: endereço do DBxxx, usuários do banco, desempenho do Zabbix, Grafana e LDAP, MCP, Selenium | Sim, iguais nos 3 |
+| `catalogo/config/rules.yaml` | regras do catálogo | Sim |
 
-**Nunca coloque senha nos arquivos do Git.** No `docker-compose.yml`, cada senha vem de uma variável da stack e é obrigatória: se faltar, o Portainer recusa o deploy dizendo qual falta.
+**Nunca coloque senha nos arquivos do Git.** No `docker-compose.yml`, cada senha vem do `.env` e é obrigatória: se faltar, o `docker compose` para dizendo qual falta. O `.env` está no `.gitignore`, então o `git pull` nunca sobrescreve nem publica o que você preencheu.
 
-### Por que algumas configs viram imagem
-
-O Portainer CE clona o repositório e roda o compose a partir dele, mas **não monta arquivos do repositório dentro dos containers** (isso é o recurso *relative path volumes*, só da edição Business). Por isso:
-- o nginx do `/catalogo/` e as configs do Grafana entram em imagens próprias (`config/zabbix-web/` e `config/grafana/`), junto com o catálogo;
-- essas 3 imagens são construídas pelo **GitLab CI** e publicadas no registry do GitLab. A stack só baixa: o Portainer **não consegue fazer build num servidor ligado por agent** (o deploy falha com `failed to list workers ... http2: frame too large`);
-- os dados ficam em **volumes nomeados** do Docker (`zabbix-proxy-data`, `grafana-data`, `catalogo-data` e as pastas de scripts do Zabbix). O Docker cria os volumes com o dono certo, então ninguém precisa entrar no Linux para criar pastas.
+O nginx do `/catalogo/` e as configs do Grafana vão dentro de imagens construídas no próprio servidor (`config/zabbix-web/` e `config/grafana/`), junto com o catálogo. Os dados ficam em **volumes nomeados** do Docker (`zabbix-proxy-data`, `grafana-data`, `catalogo-data` e as pastas de scripts do Zabbix), criados com o dono certo, sem precisar preparar pastas.
 
 ## Passo a passo
 
@@ -96,43 +89,31 @@ No **DBxxx** (já existentes; só confira):
 - existe um database `grafana` com usuário para o Grafana;
 - existe um usuário **somente leitura** no banco do Zabbix para o catálogo.
 
-No **Portainer**: os 3 servidores cadastrados como ambientes, cada um com o **Portainer agent** instalado à parte. O agent não fica nesta stack: se ficasse, todo redeploy derrubaria a conexão do próprio Portainer com o servidor no meio do deploy.
+Nos **3 servidores**: Docker com o plugin `docker compose`, `git` e acesso de saída para baixar as imagens (Docker Hub) e o plugin do Grafana no build.
 
-No **GitLab**:
-- um *deploy token* com `read_repository` (para o Portainer clonar) e `read_registry` (para baixar as imagens);
-- um **runner** que aceite Docker-in-Docker (`docker:dind`, executor Docker com `privileged = true`) e o **Container Registry** habilitado no projeto.
+### 2. Ajustar o que fica no Git
 
-No Portainer, cadastre o registry: *Registries → Add registry → GitLab* (ou *Custom registry*), com a URL do registry e o deploy token. Sem isso os servidores não conseguem baixar as imagens.
+Troque os nomes fictícios em `monitoring-data/*/*.env` (`DBxxx`, `empresa.com.br`, LDAP, redes do MCP) e faça commit. Esses arquivos são **iguais nos 3 servidores**.
 
-### 2. Ajustar o que fica no Git e gerar as imagens
+### 3. Subir em cada servidor
 
-Troque os nomes fictícios em `monitoring-data/*/*.env` (`DBxxx`, `empresa.com.br`, redes do MCP) e faça commit. Esses arquivos são **iguais nos 3 servidores**.
+```bash
+git clone -b HML-Corp <url-do-repositório> monitoramento
+cd monitoramento
+cp .env.example .env      # copie, não renomeie
+vi .env                   # preencha
+docker compose up -d --build
+```
 
-O push dispara o pipeline (`.gitlab-ci.yml`), que publica `zabbix-web`, `grafana` e `catalogo` em *Deploy → Container Registry* com a tag da branch (`hml-corp`). Espere o pipeline terminar antes do primeiro deploy.
+No `.env`, só `NODE_NAME`, `NODE_IP` e `CATALOGO_COLLECT_AT` mudam entre os 3 servidores; o resto é igual. A `GRAFANA_SECRET_KEY` **precisa** ser a mesma nos 3. O `ZABBIX_API_TOKEN` fica vazio até o passo 4. Proteja o arquivo: `chmod 600 .env`.
 
-### 3. Criar uma stack por servidor no Portainer
-
-Em cada um dos 3 ambientes: *Stacks → Add stack → Repository*.
-
-| Campo | Valor |
-|---|---|
-| Name | `monitoramento` |
-| Repository URL | URL do repositório no GitLab |
-| Repository reference | `refs/heads/HML-Corp` |
-| Compose path | `docker-compose.yml` |
-| Authentication | usuário + token do GitLab |
-| GitOps updates | ligado, mecanismo **Webhook**, com *Re-pull image* marcado |
-| Environment variables | *Advanced mode*: cole `portainer.env.example` e preencha |
-
-`IMAGE_REGISTRY` é o endereço do registry do projeto (o `CI_REGISTRY_IMAGE`, que aparece em *Deploy → Container Registry*). Nas variáveis, só `NODE_NAME`, `NODE_IP` e `CATALOGO_COLLECT_AT` mudam entre as 3 stacks; o resto é igual. A `GRAFANA_SECRET_KEY` **precisa** ser a mesma nas 3. O `ZABBIX_API_TOKEN` fica vazio até o passo 4.
-
-**Atualizações automáticas:** copie a URL do webhook de cada uma das 3 stacks para as variáveis de CI `PORTAINER_WEBHOOK_1`, `PORTAINER_WEBHOOK_2` e `PORTAINER_WEBHOOK_3` do projeto (*Settings → CI/CD → Variables*, **mascaradas**: quem tem a URL atualiza a stack). A cada commit, o pipeline constrói as imagens e só **depois** chama os webhooks, e o Portainer baixa o Git e as imagens novas. Com polling, o Portainer poderia atualizar antes de as imagens ficarem prontas.
+O primeiro `up` demora mais porque constrói as imagens do Zabbix web, do Grafana e do catálogo.
 
 ### 4. Configurar no frontend do Zabbix
 
 1. Troque a senha do `Admin`.
 2. **Proxies:** em *Administração → Proxies*, crie os proxies `proxy-SRVxxx01`, `proxy-SRVxxx02` e `proxy-SRVxxx03` (modo ativo) e um **proxy group** com os três (*Administração → Proxy groups*, mínimo online = 1). Monitore os hosts pelo proxy group.
-3. **Token do Grafana:** crie um usuário de serviço com papel somente leitura e um token de API para ele. Coloque o token na variável `ZABBIX_API_TOKEN` das 3 stacks no Portainer e clique em *Update the stack*.
+3. **Token do Grafana:** crie um usuário de serviço com papel somente leitura e um token de API para ele. Coloque o token em `ZABBIX_API_TOKEN` no `.env` dos 3 servidores e rode `docker compose up -d grafana`.
 4. **Relatórios:** em *Administração → Geral → Outros*, ajuste a *URL do frontend* para `https://zabbix.empresa.com.br/`. O web service usa essa URL para gerar os PDFs.
 
 ### 5. Balanceador (F5)
@@ -160,7 +141,7 @@ O Grafana autentica no AD pelo `config/grafana/ldap.toml`, que vai dentro da ima
 | `grafana.env` (Git) | `LDAP_SEARCH_BASE_DN`, `LDAP_SEARCH_FILTER` | onde procurar os usuários (padrão AD: `sAMAccountName`) |
 | `grafana.env` (Git) | `LDAP_GROUP_ADMIN_DN`, `LDAP_GROUP_EDITOR_DN`, `LDAP_GROUP_VIEWER_DN` | grupos do AD que viram Admin, Editor e Viewer (`*` = todos) |
 | `grafana.env` (Git) | `LDAP_ROOT_CA_CERT` | CA da empresa para LDAPS; o arquivo vai em `config/grafana/certs/` |
-| Portainer | `LDAP_BIND_PASSWORD` | senha da conta de serviço |
+| `.env` | `LDAP_BIND_PASSWORD` | senha da conta de serviço |
 
 O admin local (`admin`) continua entrando, para não perder o acesso se o AD cair. Para testar um usuário: *Administração → Autenticação → LDAP → Test user mapping*. Não salve alterações nessa tela: no Grafana 13 o que for salvo pela interface passa a valer no lugar do `ldap.toml`.
 
@@ -168,9 +149,7 @@ A senha da conta de serviço não pode ter aspas duplas (`"`) nem barra invertid
 
 ### 7. Validar
 
-Pelo Portainer: na stack, todos os containers `running` e o `zabbix-web` `healthy`; os logs de cada container ficam no ícone de logs.
-
-Quem tem acesso ao servidor pode rodar as checagens completas, na pasta de um clone do repositório:
+Em cada servidor, na pasta do repositório:
 
 ```bash
 ./scripts/validar.sh
@@ -179,40 +158,44 @@ ZABBIX_API_TOKEN=... ./scripts/validar.sh      # inclui o teste do MCP
 
 O script confere:
 - se os 9 containers estão de pé e o estado do HA (`zabbix_server -R ha_status`);
-- `/ping` do web, `/catalogo/`, Grafana, Portainer agent, Selenium, Java gateway e web service;
+- `/ping` do web, `/catalogo/`, Grafana, Selenium, Java gateway e web service;
 - erros recentes nos logs.
 
 ## Roteiro de testes de homologação
 
 | # | Teste | Como | Esperado |
 |---|---|---|---|
-| 1 | HA | Portainer → container `zabbix-server` → *Console*: `zabbix_server -R ha_status` | 3 nós: 1 `active`, 2 `standby` |
-| 2 | Failover | *Stop* no `zabbix-server` do nó ativo (Portainer); depois `ha_status` em outro | Um standby vira `active` em até ~1 min; o frontend segue funcionando. Depois, *Start* |
+| 1 | HA | `docker exec zabbix-server zabbix_server -R ha_status` em qualquer servidor | 3 nós: 1 `active`, 2 `standby` |
+| 2 | Failover | `docker stop zabbix-server` no nó ativo; depois `ha_status` em outro | Um standby vira `active` em até ~1 min; o frontend segue funcionando. Depois, `docker start zabbix-server` |
 | 3 | Frontend em cada nó | `curl -I http://<IP>/` nos 3 | 200 nos 3 |
-| 4 | Proxy group | *Administração → Proxies* | 3 proxies online; ao parar um (*Stop* no `zabbix-proxy`), os hosts dele passam para outro |
+| 4 | Proxy group | *Administração → Proxies* | 3 proxies online; ao parar um (`docker stop zabbix-proxy`), os hosts dele passam para outro |
 | 5 | Catálogo | `https://zabbix.empresa.com.br/catalogo/` | Lista as aplicações; `/catalogo` e `/catálogo` redirecionam |
 | 6 | JMX | Host com interface JMX e template *Generic Java JMX* | Itens JMX coletando |
 | 7 | Relatório | *Relatórios → Relatórios agendados → Testar* | PDF gerado e enviado |
 | 8 | Browser item | Item do tipo *Browser* (ex.: template *Website by Browser*) | Item coletando via Selenium |
 | 9 | MCP | `validar.sh` com `ZABBIX_API_TOKEN` | `tools/list` responde |
 | 10 | Grafana | `https://grafana.empresa.com.br` → *Connections → Data sources → Zabbix → Test* | Datasource OK; mesmo dashboard visto pelos 3 nós |
-| 11a | LDAP | Login no Grafana com um usuário do AD de cada grupo | Entra com o papel do grupo (Admin/Editor/Viewer) |
 | 11 | APM | App com OpenTelemetry exportando para `<IP do proxy>:4317` | Traces aparecem no Zabbix |
-| 12 | GitOps | Commit trocando um valor em `monitoring-data/` | As 3 stacks atualizam sozinhas |
+| 12 | LDAP | Login no Grafana com um usuário do AD de cada grupo | Entra com o papel do grupo (Admin/Editor/Viewer) |
 
 ## Operação
 
-Tudo pelo Portainer, na stack de cada servidor:
-- **Mudar uma senha ou valor do servidor:** *Environment variables* → *Update the stack*.
-- **Mudar o resto:** commit no GitLab; o GitOps aplica nas 3 stacks.
-- **Atualizar as imagens do trunk:** rode o pipeline (ou agende-o semanalmente em *Build → Pipeline schedules*) e depois *Pull and redeploy*, um servidor por vez.
-- **Dados:** ficam nos volumes nomeados; remover ou recriar a stack não apaga os volumes.
+Na pasta do repositório, em cada servidor:
+
+```bash
+git pull && docker compose up -d --build          # aplicar o que mudou no Git
+docker compose up -d                              # aplicar uma mudança no .env
+docker compose pull --ignore-buildable && docker compose build --pull && docker compose up -d   # atualizar as imagens do trunk
+docker compose ps
+docker compose logs -f zabbix-server
+docker compose down                               # parar a stack (os volumes com os dados ficam)
+```
 
 Para atualizar o trunk, faça **um servidor por vez**. Comece pelos standby e deixe o ativo por último. Quando o schema muda entre builds, o primeiro server a subir aplica o upgrade no banco.
 
 ## Pendências para o ambiente real
 
 - Trocar os nomes fictícios: `DBxxx`, `SRVxxx01..03`, IPs `10.0.0.11..13`, `empresa.com.br`.
-- Preencher as variáveis das 3 stacks no Portainer (`portainer.env.example`).
+- Preencher o `.env` dos 3 servidores (modelo em `.env.example`).
 - Configurar os pools no F5.
-- Opcional: PSK entre proxies e server (`ZBX_TLS*` no `zabbix-proxy.env`), TLS com o banco (`ZBX_DBTLS*`) e `AGENT_SECRET` do Portainer agent.
+- Opcional: PSK entre proxies e server (`ZBX_TLS*` no `zabbix-proxy.env`), TLS com o banco (`ZBX_DBTLS*`).

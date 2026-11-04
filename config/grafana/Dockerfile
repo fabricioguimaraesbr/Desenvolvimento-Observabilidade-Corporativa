@@ -1,5 +1,4 @@
-# Grafana com o plugin do Zabbix, o datasource provisionado e o LDAP. Tudo vai
-# dentro da imagem porque o Portainer CE não monta arquivos do repositório Git.
+# Grafana com o plugin do Zabbix, o datasource provisionado e o LDAP.
 ARG GRAFANA_TAG=13.2.4
 FROM grafana/grafana:${GRAFANA_TAG}
 

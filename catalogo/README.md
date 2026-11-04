@@ -43,7 +43,7 @@ O catálogo lê a configuração do Zabbix 7 e 8.0 (hosts, host groups, template
 Na stack **Monitoramento Corporativo** o catálogo já sobe junto com o Zabbix, nos 3 servidores, e fica em `https://zabbix.empresa.com.br/catalogo/`. O passo a passo está no [README da raiz](../README.md). Em resumo:
 
 - **Usuário somente leitura** no PostgreSQL do Zabbix, com `SELECT` nas tabelas de configuração. O coletor funciona no Zabbix 7 e no 8.0.
-- **Variáveis**: `monitoring-data/catalogo/catalogo.env` (no Git, sem senha); a senha do banco é a variável `CATALOGO_DB_PASSWORD` da stack no Portainer. As regras ficam em `catalogo/config/rules.yaml`, dentro da imagem.
+- **Variáveis**: `monitoring-data/catalogo/catalogo.env` (no Git, sem senha); a senha do banco é `CATALOGO_DB_PASSWORD` no `.env` da raiz. As regras ficam em `catalogo/config/rules.yaml`, dentro da imagem.
 - **Publicação em `/catalogo/`**: o nginx do container `zabbix-web` encaminha para o container `catalogo`, com as configs de `config/zabbix-web/`. O Zabbix sobe normalmente mesmo com o catálogo parado: só `/catalogo/` responde 502 até ele voltar.
 - **Coleta**: cada servidor coleta num horário diferente (`CATALOGO_COLLECT_AT` no `.env` do servidor), para não somar carga no banco.
 

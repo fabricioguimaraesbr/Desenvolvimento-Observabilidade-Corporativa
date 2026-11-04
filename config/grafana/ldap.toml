@@ -2,7 +2,7 @@
 # LDAP do Grafana. Vai dentro da imagem (config/grafana/Dockerfile).
 # NÃO edite valores aqui: cada $__env{...} vem de uma variável de ambiente.
 #   - monitoring-data/grafana/grafana.env (no Git): servidor, DNs, filtro, grupos
-#   - variável LDAP_BIND_PASSWORD da stack no Portainer: senha da conta de serviço
+#   - variável LDAP_BIND_PASSWORD no .env do servidor: senha da conta de serviço
 # Modelo pensado para Active Directory.
 # =============================================================================
 

@@ -13,7 +13,6 @@ env_value() { grep -E "^$1=" .env 2>/dev/null | tail -1 | cut -d= -f2- || true; 
 WEB_HTTP_PORT=$(env_value WEB_HTTP_PORT); WEB_HTTP_PORT=${WEB_HTTP_PORT:-80}
 MCP_PORT=$(env_value MCP_PORT); MCP_PORT=${MCP_PORT:-8444}
 GRAFANA_PORT=$(env_value GRAFANA_PORT); GRAFANA_PORT=${GRAFANA_PORT:-3000}
-PORTAINER_AGENT_PORT=$(env_value PORTAINER_AGENT_PORT); PORTAINER_AGENT_PORT=${PORTAINER_AGENT_PORT:-9001}
 
 falhas=0
 ok()   { printf '  \033[32mOK\033[0m    %s\n' "$1"; }
@@ -45,7 +44,6 @@ echo "== Serviços"
 check "Zabbix web responde em :$WEB_HTTP_PORT/ping" curl -fsS "http://127.0.0.1:$WEB_HTTP_PORT/ping"
 check "Catálogo responde em :$WEB_HTTP_PORT/catalogo/api/health" curl -fsS "http://127.0.0.1:$WEB_HTTP_PORT/catalogo/api/health"
 check "Grafana saudável em :$GRAFANA_PORT/api/health" curl -fsS "http://127.0.0.1:$GRAFANA_PORT/api/health"
-check "Portainer agent (instalado fora da stack) escuta em :$PORTAINER_AGENT_PORT" bash -c "exec 3<>/dev/tcp/127.0.0.1/$PORTAINER_AGENT_PORT"
 check "Selenium pronto (status do grid)" docker exec selenium curl -fsS http://localhost:4444/status
 check "Java gateway escuta em 10052 (rede interna)" docker exec zabbix-server sh -c "nc -z zabbix-java-gateway 10052"
 check "Web service escuta em 10053 (rede interna)" docker exec zabbix-server sh -c "nc -z zabbix-web-service 10053"
