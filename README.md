@@ -109,6 +109,42 @@ No `.env`, só `NODE_NAME`, `NODE_IP` e `CATALOGO_COLLECT_AT` mudam entre os 3 s
 
 O primeiro `up` demora mais porque constrói as imagens do Zabbix web, do Grafana e do catálogo.
 
+### Servidor sem internet
+
+As imagens do Docker Hub costumam chegar pelo proxy ou espelho que o Docker do servidor já usa. O que falha é o **build**: o catálogo baixa bibliotecas Python (PyPI) e o Grafana baixa o plugin do Zabbix (grafana.com). O sintoma é `Network is unreachable` no `pip install`. Depois de construídas, as imagens rodam sem internet. O `zabbix-web` não baixa nada no build.
+
+**Opção 1: proxy corporativo.** Veja se o Docker do servidor já usa um proxy:
+
+```bash
+systemctl show docker --property=Environment
+```
+
+Se aparecer `HTTPS_PROXY=...`, passe o mesmo proxy só para o build. Ele não fica gravado nas imagens nem vale para os containers:
+
+```bash
+docker compose build --build-arg HTTP_PROXY=http://proxy.empresa.com.br:3128 --build-arg HTTPS_PROXY=http://proxy.empresa.com.br:3128
+docker compose up -d
+```
+
+Daí em diante, atualize com `git pull`, o mesmo `docker compose build --build-arg ...` e `docker compose up -d`.
+
+**Opção 2: construir numa máquina com internet e copiar.** Na máquina com internet, no repositório. Use `linux/amd64`, que é a plataforma dos servidores, mesmo num Mac com chip Apple:
+
+```bash
+DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose build grafana catalogo
+docker save monitoramento/grafana:13.2.4 monitoramento/catalogo:latest | gzip > imagens.tar.gz
+```
+
+Copie o `imagens.tar.gz` para os 3 servidores e, em cada um:
+
+```bash
+gunzip -c imagens.tar.gz | docker load
+docker compose build zabbix-web
+docker compose up -d
+```
+
+Nesse caso **não use `--build`** no `up`: ele tentaria reconstruir o catálogo e o Grafana e falharia de novo. Quando mudar algo em `catalogo/` ou `config/grafana/`, repita a cópia.
+
 ### 4. Configurar no frontend do Zabbix
 
 1. Troque a senha do `Admin`.
